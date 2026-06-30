@@ -11,6 +11,7 @@ import streamlit as st
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar
 from database.db import db_load_all
 
 st.set_page_config(page_title="Project Execution — AI Governance Platform",
@@ -18,6 +19,7 @@ st.set_page_config(page_title="Project Execution — AI Governance Platform",
 
 apply_theme()
 render_sidebar("project_execution")
+render_navbar("project_execution")
 
 st.title("🚧 Project Execution")
 st.caption("Track execution of approved AI initiatives after governance sign-off.")

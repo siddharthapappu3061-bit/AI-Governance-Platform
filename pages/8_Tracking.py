@@ -11,6 +11,7 @@ import pandas as pd
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar
 from database.db import db_load_all, db_load_governance_decisions
 from config.constants import STATUS_BADGE
 
@@ -19,6 +20,7 @@ st.set_page_config(page_title="Tracking — AI Governance Platform",
 
 apply_theme()
 render_sidebar("tracking")
+render_navbar("tracking")
 
 st.title("📍 Tracking")
 st.caption("Lifecycle status of every submission — Submitted → Under Review → Approved / "

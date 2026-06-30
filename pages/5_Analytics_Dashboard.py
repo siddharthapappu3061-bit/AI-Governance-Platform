@@ -20,12 +20,15 @@ from database.db import (
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar, render_breadcrumb
 
 st.set_page_config(page_title="AI Governance Platform", page_icon="🤖",
                     layout="wide", initial_sidebar_state="expanded")
 
 apply_theme()
 render_sidebar("m5")
+render_navbar("m5")
+render_breadcrumb("Problem Selection", "Governance Board")
 
 # ── ISO 42001 Organisational Governance Clauses shown in dashboard ─────────
 ISO_CLAUSES = [
@@ -80,6 +83,7 @@ def _render_header():
 
     st.title("Governance Dashboard")
     st.caption("Central committee view · ISO 42001 Organisational Governance · NIST AI RMF Technical Monitoring")
+    st.page_link("pages/4_Governance_Review.py", label="🏛️ Record a formal committee decision →")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     _kpi(c1, "Total Use Cases", str(total), "#6C63FF", "All submitted AI problems")
@@ -827,7 +831,7 @@ t1, t2, t3, t4 = st.tabs([
     "📋 Overview",
     "🏛️ Org Governance (ISO 42001)",
     "🔬 Technical Monitoring (NIST)",
-    "📊 Graphs",
+    "📊 Visuals",
 ])
 
 with t1:

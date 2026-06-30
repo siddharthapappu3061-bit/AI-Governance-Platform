@@ -1,27 +1,35 @@
 # ui/sidebar.py
 # ─────────────────────────────────────────────────────────────────────────
-# Idea Submission v2 nav redesign. Visual theme (gradient background, top
-# badge) is preserved from the original unified sidebar — only the
-# navigation structure changes, per the new spec:
+# Figma-aligned sidebar redesign (figma.com/make/.../Cortexa-AIGovernance-V1.1).
 #
-#   Instructions / Readme        (shown only when clicked — no auto-display)
-#   Problem Selection  (expandable)
-#       ├── Idea Submission
-#       ├── Feasibility Assessment
-#       ├── Governance Review
-#       └── Dashboard
-#   Project Execution
-#   Tracking
+# The Figma reference uses a slim dark sidebar with a single "WORKFLOW"
+# header and a flat list of three steps — Idea Submission, Assessment,
+# Governance Board — no nested expanders. "Assessment" covers what this
+# app implements as two pages (Feasibility Assessment + Gain-Pain
+# Analysis) via an in-page tab switcher (see ui/navbar.py's breadcrumb +
+# the sub-tab pills added at the top of those two pages). "Governance
+# Board" covers what this app implements as the Governance Dashboard
+# (Overview / ISO 42001 / NIST / Visuals tabs already match the Figma
+# design 1:1) — the standalone Governance Review (committee decision
+# form) page still exists and is linked to from inside the dashboard.
 #
-# Streamlit's sidebar has no native collapsible nav-group widget, so
-# "Problem Selection" is implemented as a sidebar st.expander wrapping the
-# four page_links — clicking the group header expands/collapses it, and
-# each link inside still uses the normal page_link contract.
+# The logo block at the top is kept exactly as before — only the nav list
+# below it changes. Project Execution / Tracking are out of this sidebar
+# entirely now since Figma treats them as their own top-level sections
+# (see ui/navbar.py) — both remain placeholder pages per the brief.
 # ─────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
 
 from utils.helpers import get_api_key, resolve_model
+
+import base64
+
+def _logo_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+logo = _logo_base64("assets/logo2.png")
 
 PAGE_BADGES = {
     "landing":           ("🤖", "AI Governance Platform"),
@@ -30,11 +38,27 @@ PAGE_BADGES = {
     "m2":                ("📊", "Feasibility Assessment"),
     "m3":                ("⚖️", "Gain-Pain Analysis"),
     "m4":                ("🏛️", "Governance Review"),
-    "m5":                ("📊", "Analytics Dashboard"),
+    "m5":                ("📊", "Governance Board"),
     "m6":                ("🧑‍⚖️", "Expert Advice"),
     "project_execution": ("🚧", "Project Execution"),
     "tracking":          ("📍", "Tracking"),
 }
+
+# Pages that belong to the "Problem Selection" workflow section — the
+# sidebar's WORKFLOW list only appears for these, matching the Figma
+# behaviour where Instructions / Project Execution / Tracking show no
+# left sidebar at all.
+WORKFLOW_SECTION = {"idea_submission", "m2", "m3", "m4", "m5", "m6"}
+
+# The three flat WORKFLOW entries, Figma-style. "Assessment" routes to the
+# Feasibility Assessment page (the first of the two assessment sub-pages);
+# "Governance Board" routes to the Analytics/Governance dashboard.
+WORKFLOW_ITEMS = [
+    ("idea_submission",  "💡 Idea Submission",   "pages/1_Idea_Submission.py"),
+    ("assessment",       "📊 Assessment",        "pages/2_Feasibility_Assessment.py"),
+    ("governance_review","🏛️ Governance Review", "pages/4_Governance_Review.py"),
+    ("governance_board", "✅ Governance Board",  "pages/5_Analytics_Dashboard.py"),
+]
 
 
 def _init_llm_defaults():
@@ -82,42 +106,43 @@ def render_sidebar(active: str = "landing"):
         }
         </style>
         """, unsafe_allow_html=True)
-    
-    """Render the unified sidebar with the new grouped navigation.
-    `active` is one of PAGE_BADGES' keys."""
+
     _init_llm_defaults()
 
-    icon, label = PAGE_BADGES.get(active, ("🤖", "AI Governance Platform"))
-    st.sidebar.markdown(f"""
-    <div style="background:#6D5DF6;padding:12px;border-radius:12px;
-                margin-bottom:10px;font-weight:bold;">
-    {icon} {label}
-    </div>
-    """, unsafe_allow_html=True)
-
     with st.sidebar:
-        st.markdown("# 🤖 AI Governance")
-        st.caption("TekFrameWorks Governance Platform")
-        st.divider()
 
-        st.write("")
+        st.markdown(
+            f"""
+            <div class="sidebar-logo">
+                <img src="data:image/png;base64,{logo}">
+            </div>
 
-        # ── Problem Selection — expandable group ────────────────────────────
-        problem_selection_active = active in ("idea_submission", "m2", "m3", "m4", "m5", "m6")
-        # ── Instructions / Readme — link only, never auto-displayed ────────
-        st.page_link("pages/0_Instructions.py", label="📘 Instructions / Readme")
-        with st.expander("🗂️ **Problem Selection**", expanded=problem_selection_active):
-            st.page_link("pages/1_Idea_Submission.py", label="💡 Idea Submission")
-            st.page_link("pages/2_Feasibility_Assessment.py", label="📊 Feasibility Assessment")
-            st.page_link("pages/3_Gain_Pain_Analysis.py", label="⚖️ Gain-Pain Analysis")
-            st.page_link("pages/4_Governance_Review.py", label="🏛️ Governance Review")
-            st.page_link("pages/5_Analytics_Dashboard.py", label="📊 Dashboard")
+            <div class="sidebar-title">
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-        st.write("")
-        st.page_link("pages/7_Project_Execution.py", label="🚧 Project Execution")
-        st.page_link("pages/8_Tracking.py", label="📍 Tracking")
+        # Flat WORKFLOW list — only for pages inside the Problem Selection
+        # section, matching the Figma reference's collapsed/expanded states.
+        if active in WORKFLOW_SECTION:
+            st.markdown('<div class="cx-workflow-label">WORKFLOW</div>', unsafe_allow_html=True)
 
-        # ── Secondary / supporting pages kept reachable but out of the way ──
-        st.write("")
-        with st.expander("More"):
-            st.page_link("pages/6_Expert_Advice.py", label="🧑‍⚖️ Expert Advice")
+            assessment_active = active in ("m2", "m3")
+            review_active = active in ("m2")
+            governance_active = active in ("m4", "m5")
+
+            for code, label, target in WORKFLOW_ITEMS:
+                is_active = (
+                    (code == "idea_submission" and active == "idea_submission") or
+                    (code == "assessment" and assessment_active) or
+                    (code == "governance_review" and review_active) or
+                    (code == "governance_board" and governance_active)
+                )
+                css_class = "cx-nav-item cx-nav-active" if is_active else "cx-nav-item"
+                st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+                st.page_link(target, label=label)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # Expert Advice kept reachable but tucked out of the primary
+            # three-item list, same as Figma keeps secondary tools subtle.

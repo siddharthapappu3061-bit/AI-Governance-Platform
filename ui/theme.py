@@ -13,7 +13,7 @@
 import base64
 import streamlit as st
 
-LOGO_PATH = "assets/logo.png"
+LOGO_PATH = "assets/logo2.png"
 
 
 def _get_base64(file_path: str) -> str:
@@ -22,18 +22,56 @@ def _get_base64(file_path: str) -> str:
 
 
 def apply_global_styles():
-    """Inject Friend's global CSS — sidebar gradient, cards, buttons, etc."""
 
-    # Hide default Streamlit multipage nav + sidebar gradient + sidebar text
     st.markdown("""
-    <style>
-    [data-testid="stSidebarNav"] { display:none; }
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #071126, #0B1734, #071126);
-    }
-    section[data-testid="stSidebar"] * { color:white; }
-    </style>
-    """, unsafe_allow_html=True)
+        <style>
+
+        /* Hide Streamlit's default multipage navigation */
+        [data-testid="stSidebarNav"]{
+            display:none !important;
+        }
+
+        /* Hide the new navigation container used by newer Streamlit versions */
+        section[data-testid="stSidebar"] nav{
+            display:none !important;
+        }
+
+        </style>
+        """, unsafe_allow_html=True)
+            
+    st.markdown("""
+        <style>
+        .sidebar-logo{
+            display:flex;
+            justify-content:center;
+            margin-top:12px;
+            margin-bottom:18px;
+        }
+
+        .sidebar-logo img{
+            width:200px;
+            height:auto;
+        }
+
+        .sidebar-title{
+            text-align:center;
+            margin-bottom:28px;
+        }
+
+        .sidebar-title h2{
+            margin:0;
+            color:white;
+            font-size:2rem;
+            font-weight:700;
+        }
+
+        .sidebar-title p{
+            margin-top:6px;
+            color:#B8C1D9;
+            font-size:0.95rem;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
     # Card-title containers + score number/label (used on Feasibility /
     # Governance Review / Analytics pages)
@@ -90,6 +128,68 @@ def apply_global_styles():
     </style>
     """, unsafe_allow_html=True)
 
+
+    # ── Figma-aligned navbar / breadcrumb / flat WORKFLOW sidebar list ─────
+    st.markdown("""
+    <style>
+    /* Top section navbar — dark bar holding the 4 page_link "tabs" */
+    .cx-navbar {
+        background: #0B1220;
+        border-radius: 12px;
+        padding: 0.4rem 0.8rem 0;
+        margin-bottom: 1.1rem;
+        border: 1px solid #1E293B;
+    }
+    .cx-navbar [data-testid="stHorizontalBlock"] { gap: 0; }
+    .cx-navbar a {
+        color: #94A3B8 !important;
+        text-decoration: none !important;
+        font-size: 0.92rem;
+        font-weight: 500;
+        padding-bottom: 0.6rem;
+        display: inline-block;
+        border-bottom: 2px solid transparent;
+    }
+    .cx-navbar a:hover { color: #E2E8F0 !important; }
+    .cx-navbar [data-testid="stPageLink-NavLink"] { width: auto !important; }
+
+    /* Breadcrumb under navbar */
+    .cx-breadcrumb {
+        font-size: 0.85rem;
+        margin: -0.4rem 0 1rem 0.1rem;
+    }
+    .cx-breadcrumb-muted  { color: #94A3B8; }
+    .cx-breadcrumb-sep    { color: #CBD5E1; margin: 0 6px; }
+    .cx-breadcrumb-active { color: #0F172A; font-weight: 700; }
+
+    /* Flat WORKFLOW sidebar list */
+    .cx-workflow-label {
+        color: #7C8AA8; font-size: 0.72rem; font-weight: 700;
+        letter-spacing: 0.08em; margin: 4px 0 10px 4px;
+    }
+    .cx-nav-item {
+        border-radius: 10px; margin-bottom: 4px; overflow: hidden;
+    }
+    .cx-nav-item [data-testid="stPageLink-NavLink"] {
+        width: 100% !important; padding: 0.5rem 0.7rem !important;
+        border-radius: 10px !important;
+    }
+    .cx-nav-item a p { color: #CBD5E1 !important; font-weight: 500 !important; }
+    .cx-nav-item:hover { background: rgba(255,255,255,0.06); }
+    .cx-nav-active { background: #1f2b4d; border-left: 3px solid #5B8DEF; }
+    .cx-nav-active a p { color: #ffffff !important; font-weight: 700 !important; }
+
+    /* Sub-tab pills (Feasibility Assessment | Gain-Pain Analysis, etc.) */
+    .cx-subtabs [data-testid="stPageLink-NavLink"] {
+        background: #F1F5F9; border-radius: 10px; padding: 0.5rem 0.9rem !important;
+        border: 1px solid #E2E8F0;
+    }
+    .cx-subtabs-active [data-testid="stPageLink-NavLink"] {
+        background: #EEF2FF !important; border: 1px solid #6C63FF !important;
+    }
+    .cx-subtabs-active a p { color: #6C63FF !important; font-weight: 700 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
     # Status badges (Module 5 dashboard / status displays) — colors carried
     # over unchanged from My Project's STATUS_BADGE mapping in config/constants.py
@@ -181,4 +281,3 @@ def apply_background_logo():
 def apply_theme():
     """Call once near the top of every page."""
     apply_global_styles()
-    apply_background_logo()

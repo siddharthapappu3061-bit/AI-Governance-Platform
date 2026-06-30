@@ -26,12 +26,15 @@ from database.db import (
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar, render_breadcrumb
 
 st.set_page_config(page_title="AI Governance Platform", page_icon="🤖",
                     layout="wide", initial_sidebar_state="expanded")
 
 apply_theme()
 render_sidebar("m6")
+render_navbar("m6")
+render_breadcrumb("Problem Selection", "Expert Advice")
 
 st.title("Expert Advice")
 st.caption("Raise a concern about a Gain-Pain analysis, or — as an expert — review and adjust the scoring.")

@@ -12,6 +12,7 @@ import streamlit as st
 from database.db import init_db, db_remove_duplicate_problems
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar
 
 st.set_page_config(
     page_title="AI Governance Platform",
@@ -27,6 +28,7 @@ if not st.session_state.get("_dedup_done"):
 
 apply_theme()
 render_sidebar("landing")
+render_navbar("landing")
 
 
 def _logo_base64():
@@ -103,4 +105,4 @@ with col_b:
         st.switch_page("pages/1_Idea_Submission.py")
 
 st.write("")
-st.caption("Need help getting started? Open **Instructions / Readme** in the sidebar.")
+st.caption("Need help getting started? Open **Instructions** in the navigation bar on the top.")

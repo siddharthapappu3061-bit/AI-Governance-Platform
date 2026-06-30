@@ -15,6 +15,7 @@ import streamlit as st
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar
 
 # ==========================
 # PAGE CONFIGURATION
@@ -29,6 +30,7 @@ st.set_page_config(
 
 apply_theme()
 render_sidebar("instructions")
+render_navbar("instructions")
 
 # ==========================
 # TITLE

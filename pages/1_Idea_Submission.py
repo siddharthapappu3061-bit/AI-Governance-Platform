@@ -24,6 +24,7 @@ import streamlit as st
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar, render_breadcrumb
 
 from document_intel.extractors import SUPPORTED_EXTENSIONS
 from document_intel.context_builder import extract_all, build_unified_context, documents_summary
@@ -48,6 +49,8 @@ st.set_page_config(page_title="Idea Submission — AI Governance Platform",
 
 apply_theme()
 render_sidebar("idea_submission")
+render_navbar("idea_submission")
+render_breadcrumb("Problem Selection", "Idea Submission")
 
 st.title("💡 Idea Submission")
 st.caption("Describe your business idea, optionally attach supporting documents, "
@@ -178,14 +181,14 @@ elif ss.idea_step == 2:
                 st.caption(f"Grounded in: {grounded_in}")
 
         st.write("")
-        st.markdown("**Detected Problem Statement** — edit if needed")
+        st.markdown("**Problem Statement** — Edit if needed")
         ss.idea_fields["problem_statement"] = st.text_area(
-            "Detected Problem Statement", value=ss.idea_fields.get("problem_statement", ""),
+            "Problem Statement", value=ss.idea_fields.get("problem_statement", ""),
             height=120, label_visibility="collapsed")
 
-        st.markdown("**Detected Business Objective** — edit if needed")
+        st.markdown("**Business Objective** — Edit if needed")
         ss.idea_fields["business_objective"] = st.text_area(
-            "Detected Business Objective", value=ss.idea_fields.get("business_objective", ""),
+            "Business Objective", value=ss.idea_fields.get("business_objective", ""),
             height=100, label_visibility="collapsed")
 
         if not ss.idea_fields.get("problem_statement", "").strip():
@@ -308,6 +311,10 @@ elif ss.idea_step == 4:
         st.write("")
         st.markdown("**Are you satisfied with the proposed solution?**")
         col_yes, col_no, col_back = st.columns([1, 1, 1])
+        with col_back:
+            if st.button("← Back to details", width='stretch'):
+                ss.idea_current_proposal = None
+                goto(3)
         with col_yes:
             if st.button("✅ Yes, proceed", type="primary", width='stretch'):
                 ss.idea_fields["proposed_solution"] = (
@@ -318,13 +325,9 @@ elif ss.idea_step == 4:
                                            accepted=True, clarification_qa=ss.idea_clarification_qa)
                 goto(5)
         with col_no:
-            if st.button("❌ No, refine it", width='stretch'):
+            if st.button("📈 Get Better Solution", width='stretch'):
                 ss.idea_step = "4_clarify"
                 st.rerun()
-        with col_back:
-            if st.button("← Back to details", width='stretch'):
-                ss.idea_current_proposal = None
-                goto(3)
 
 elif ss.idea_step == "4_clarify":
     with st.container(border=True):
@@ -405,7 +408,7 @@ elif ss.idea_step == 5:
             )
 
             for i, c in enumerate(contradictions, start=1):
-                conf       = c.get("confidence_pct", 0)
+                conf = c.get("confidence_pct", 0)
                 conf_color = "#C0392B" if conf >= 80 else "#C07A10"
                 corr_key   = f"idea_correction_applied_{i}"
                 ss.setdefault(corr_key, False)
@@ -538,6 +541,7 @@ elif ss.idea_step == 5:
             label = "Continue →" if not contradictions else "Acknowledge & continue →"
             if st.button(label, type="primary", width='stretch'):
                 goto(6)
+
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 6 — Review & Save
 # ═══════════════════════════════════════════════════════════════════════════
@@ -563,14 +567,6 @@ elif ss.idea_step == 6:
                 "Workflow Location", value=ss.idea_fields.get("workflow_location", ""))
             ss.idea_fields["decision_support"] = st.text_area(
                 "Decision Support", value=ss.idea_fields.get("decision_support", ""), height=90)
-            ss.idea_fields["timeline"] = st.text_input(
-                "Timeline", value=ss.idea_fields.get("timeline", ""))
-            ss.idea_fields["owner"] = st.text_input(
-                "Owner", value=ss.idea_fields.get("owner", ""))
-            ss.idea_fields["data_sensitivity"] = st.selectbox(
-                "Data Sensitivity", sensitivity_options,
-                index=sensitivity_options.index(ss.idea_fields.get("data_sensitivity", "Internal"))
-                if ss.idea_fields.get("data_sensitivity", "Internal") in sensitivity_options else 1)
 
         if ss.idea_documents:
             with st.expander(f"📎 {len(ss.idea_documents)} document(s) attached"):

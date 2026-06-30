@@ -31,19 +31,21 @@ from database.governance_repository import (
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar, render_breadcrumb
 
 st.set_page_config(page_title="AI Governance Platform", page_icon="🤖",
                     layout="wide", initial_sidebar_state="expanded")
 
 apply_theme()
 render_sidebar("m4")
+render_navbar("m4")
+render_breadcrumb("Problem Selection", "Governance Review")
 
 # =====================================
 # PAGE TITLE
 # =====================================
 
 st.title("Governance Review")
-
 
 problems = get_problems()
 

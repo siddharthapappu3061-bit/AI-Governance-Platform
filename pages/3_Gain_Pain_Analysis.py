@@ -27,12 +27,20 @@ from llm.gain_pain_logic import call_m3_ai, call_smart_questions_ai
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
+from ui.navbar import render_navbar, render_breadcrumb, render_subtabs
 
 st.set_page_config(page_title="AI Governance Platform", page_icon="🤖",
                     layout="wide", initial_sidebar_state="expanded")
 
 apply_theme()
 render_sidebar("m3")
+render_navbar("m3")
+render_breadcrumb("Problem Selection", "Assessment")
+render_subtabs(
+    [("📊 Feasibility Assessment", "pages/2_Feasibility_Assessment.py"),
+     ("⚖️ Gain-Pain Analysis", "pages/3_Gain_Pain_Analysis.py")],
+    active_target="pages/3_Gain_Pain_Analysis.py",
+)
 
 # ==========================================
 # PART 1 — PROBLEM SELECTION (Friend's)
