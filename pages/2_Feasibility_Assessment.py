@@ -22,6 +22,7 @@ from database.problem_repository import get_problems
 from database.db import db_get_problem, db_save_assessment, db_update_status, db_load_assessments
 from config.constants import ASSESSMENT_DIMENSIONS, VERDICT_CONFIG, M2_SCORING_BASIS, M2_OVERALL_FORMULA_HTML
 from utils.helpers import get_completeness_color, call_m2_assessment, sanitize_ai_text
+from database.problem_repository import update_problem_planning_context
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
@@ -241,7 +242,7 @@ with right:
 
     if st.button(
         "💾 Save Assessment",
-        use_container_width=True
+        width = 'stretch'
     ):
         
         strengths = "\n".join(
@@ -335,6 +336,11 @@ with right:
                 indent=2
             ),
         })
+        update_problem_planning_context(
+            problem_id,
+            timeline,
+            owner
+        )
         new_status = {"Feasible": "Under Review", "Conditional": "Deferred",
                     "Not Feasible": "Rejected"}.get(verdict, "Under Review")
         db_update_status(problem_id, new_status)
@@ -434,5 +440,20 @@ if assessments:
     }])
     st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode(),
                         f"assessment_{latest['id']}.csv", "text/csv")
+st.divider()
 
-st.info("Proceed to **⚖️ Gain Pain Analysis** in the sidebar to continue.")
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    st.success(
+        "Feasibility Assessment completed successfully. "
+        "You can now continue to the Gain-Pain Analysis."
+    )
+
+with col2:
+    if st.button(
+        "➡ Continue",
+        type="primary",
+        width='stretch',
+    ):
+        st.switch_page("pages/3_Gain_Pain_Analysis.py")

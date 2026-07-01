@@ -1,26 +1,31 @@
 # pages/1_Idea_Submission.py
 # ─────────────────────────────────────────────────────────────────────────
-# Idea Submission v2 — document-aware intake flow (replaces the purely
-# conversational Module 1 experience for this project copy). Implements,
-# in order:
+# Idea Submission v3 — Figma "Cortexa" flow rework (replaces the v2 stepper
+# flow). Implements, in order:
 #
-#   Step 1  Text input + file upload (PDF/DOCX/PPTX/XLSX/CSV/TXT, multiple)
-#   Step 2  Document extraction -> unified context -> auto-captured
-#           Problem Statement + Business Objective (editable)
-#   Step 3  Business Value / Workflow Location / Decision Support questions
-#           (never invented by the LLM — always asked of the user directly)
-#   Step 4  AI-proposed solution + Yes/No validation loop with clarification
-#           questions on "No", looping until accepted
-#   Step 5  Contradiction check between user claims and uploaded documents,
-#           with file + page/slide/sheet level evidence
-#   Step 6  Review & Save (reuses the existing ISO sensitivity fields so
-#           Module 2/3/4 downstream logic keeps working unchanged)
+#   1. intake     Business Problem text + optional Supporting Files upload
+#   2. duplicate  AI-driven duplicate detection against saved projects
+#                 (skipped automatically if no close match is found)
+#   3. gaps       Cross-document Gaps / Discrepancies, each with an
+#                 editable AI-suggested resolution (skipped if no gaps,
+#                 e.g. fewer than 2 documents)
+#   4. value      One tailored, quantifiable Business Value Clarification
+#                 question
+#   5. engines    Decision Support Systems Required — AI proposes 4-5
+#                 discrete decision-support engines, each Approve/Ignore
+#   6. review     Review & Approval — Approve generates + saves the final
+#                 proposal; Edit shows "coming soon" (matches reference)
+#   7. done       Proposal Generated Successfully + View Proposal (dialog)
 #
-# Everything below Step 6 (Feasibility, Gain-Pain, Governance, Dashboard)
-# is untouched, per the merge spec.
+# Document extraction / autocapture / contradiction-detection groundwork
+# from v2 is reused as-is (document_intel/*, llm/idea_intake.py's existing
+# functions) — only the page-level flow and the new llm/idea_intake.py
+# additions (find_similar_problem, detect_gaps, generate_business_value_
+# question, propose_decision_engines) are new.
 # ─────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
+from datetime import datetime
 
 from ui.theme import apply_theme
 from ui.sidebar import render_sidebar
@@ -31,17 +36,16 @@ from document_intel.context_builder import extract_all, build_unified_context, d
 
 from llm.idea_intake import (
     autocapture_fields,
-    propose_solution,
-    generate_clarification_questions,
-    detect_contradictions,
+    find_similar_problem,
+    detect_gaps,
+    generate_business_value_question,
+    propose_decision_engines,
 )
-from llm.missing_fields import get_missing_fields
-from llm.question_generator import QUESTION_MAP
 
 from database.problem_repository import new_draft_id, save_problem_v2
 from database.db import (
-    db_save_uploaded_documents, db_save_contradiction_flags,
-    db_save_solution_proposal,
+    db_load_all, db_save_uploaded_documents,
+    db_save_decision_proposal, db_load_decision_proposal,
 )
 
 st.set_page_config(page_title="Idea Submission — AI Governance Platform",
@@ -52,563 +56,457 @@ render_sidebar("idea_submission")
 render_navbar("idea_submission")
 render_breadcrumb("Problem Selection", "Idea Submission")
 
-st.title("💡 Idea Submission")
-st.caption("Describe your business idea, optionally attach supporting documents, "
-           "and let AI help you shape it into a governance-ready proposal.")
+st.title("Idea Submission")
+st.caption("Describe your business problem clearly. The system will search for similar prior projects.")
 
 # ── Session state scaffolding ───────────────────────────────────────────────
 ss = st.session_state
-ss.setdefault("idea_step", 1)
-ss.setdefault("idea_draft_id", None)
-ss.setdefault("idea_documents", [])          # list[ExtractedDocument]
-ss.setdefault("idea_unified_context", "")
-ss.setdefault("idea_autocapture", {})
-ss.setdefault("idea_fields", {})             # accumulates all collected fields
-ss.setdefault("idea_proposal_round", 0)
-ss.setdefault("idea_current_proposal", None)
-ss.setdefault("idea_clarification_qa", [])
-ss.setdefault("idea_contradictions", None)
-ss.setdefault("idea_documents_saved", False)
-ss.setdefault("idea_pending_questions", None)
-ss.setdefault("idea_saved_record_id", None)
+ss.setdefault("m1_stage", "intake")
+ss.setdefault("m1_stage_stack", [])          # for Back navigation
+ss.setdefault("m1_draft_id", None)
+ss.setdefault("m1_documents", [])
+ss.setdefault("m1_unified_context", "")
+ss.setdefault("m1_fields", {})               # problem_statement, business_objective, workflow_location, business_value
+ss.setdefault("m1_duplicate", None)
+ss.setdefault("m1_duplicate_choice", None)   # "new" | "existing"
+ss.setdefault("m1_gaps", None)
+ss.setdefault("m1_value_question", "")
+ss.setdefault("m1_engines_result", None)     # {"rationale":..., "engines":[...]}
+ss.setdefault("m1_engine_states", {})        # idx -> "approved" | "ignored"
+ss.setdefault("m1_show_reasoning", False)
+ss.setdefault("m1_saved_record_id", None)
+ss.setdefault("m1_proposal", None)
 
-STEP_LABELS = ["Describe", "Auto-Capture", "Key Details", "Proposed Solution",
-               "Consistency Check", "Review & Save"]
-
-
-def stepper():
-    current = ss.idea_step
-    current_num = 4 if current == "4_clarify" else current
-    cols = st.columns(len(STEP_LABELS))
-    for i, (col, label) in enumerate(zip(cols, STEP_LABELS), start=1):
-        with col:
-            if i < current_num:
-                st.markdown(f"<div style='text-align:center;color:#1D9E75;font-weight:700;font-size:0.8rem;'>✅ {label}</div>", unsafe_allow_html=True)
-            elif i == current_num:
-                st.markdown(f"<div style='text-align:center;color:#6C63FF;font-weight:800;font-size:0.8rem;'>🟣 {label}</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.8rem;'>{label}</div>", unsafe_allow_html=True)
-    st.markdown("<hr style='margin-top:0.4rem;'>", unsafe_allow_html=True)
+ENGINE_COLORS = [
+    {"bar": "#3B82F6", "bg": "#EFF6FF", "badge": "#3B82F6"},   # blue
+    {"bar": "#A855F7", "bg": "#FAF5FF", "badge": "#A855F7"},   # purple
+    {"bar": "#F59E0B", "bg": "#FFFBEB", "badge": "#F59E0B"},   # orange
+    {"bar": "#10B981", "bg": "#ECFDF5", "badge": "#10B981"},   # green
+    {"bar": "#E11D48", "bg": "#FFF1F2", "badge": "#E11D48"},   # red
+]
 
 
-def goto(step: int):
-    ss.idea_step = step
+def goto(stage: str, push: bool = True):
+    if push and ss.m1_stage != stage:
+        ss.m1_stage_stack.append(ss.m1_stage)
+    ss.m1_stage = stage
+    st.rerun()
+
+
+def go_back(fallback: str = "intake"):
+    prev = ss.m1_stage_stack.pop() if ss.m1_stage_stack else fallback
+    ss.m1_stage = prev
     st.rerun()
 
 
 def restart():
     for k in list(ss.keys()):
-        if k.startswith("idea_"):
+        if k.startswith("m1_"):
             del ss[k]
     st.rerun()
 
 
-stepper()
+@st.dialog("Business Proposal", width="large")
+def proposal_dialog():
+    p = ss.m1_proposal
+    if not p:
+        st.info("No proposal available yet.")
+        return
 
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 1 — Describe the idea (text + optional file uploads)
-# ═══════════════════════════════════════════════════════════════════════════
-if ss.idea_step == 1:
-    with st.container(border=True):
-        st.subheader("Step 1 — Describe your idea")
-        st.caption("Provide a business idea, problem statement, or use case description. "
-                    "You can also attach supporting documents instead of (or in addition to) typing.")
+    st.markdown(f"#### {p.get('title', '')}")
+    badges = (
+        f"<span style='background:#D1F5EA;color:#1D9E75;padding:3px 12px;border-radius:14px;"
+        f"font-size:0.78rem;font-weight:700;margin-right:6px;'>{p.get('status','Approved')}</span>"
+        f"<span style='background:#E0E9FF;color:#3B5BDB;padding:3px 12px;border-radius:14px;"
+        f"font-size:0.78rem;font-weight:700;margin-right:6px;'>{p.get('business_unit','') or 'Unspecified'}</span>"
+        f"<span style='background:#F3E8FF;color:#9333EA;padding:3px 12px;border-radius:14px;"
+        f"font-size:0.78rem;font-weight:700;margin-right:6px;'>AI Decision Support</span>"
+        f"<span style='color:#888;font-size:0.78rem;'>🕒 Generated {p.get('generated_at','')}</span>"
+    )
+    st.markdown(badges, unsafe_allow_html=True)
+    st.write("")
 
-        user_text = st.text_area(
-            "Business idea / problem statement / use case description",
-            value=ss.idea_fields.get("_user_text", ""),
-            height=180,
-            placeholder="Describe the business idea, problem, or use case...",
-        )
+    st.markdown("**Problem Statement**")
+    st.write(p.get("problem_statement", ""))
+    st.markdown("**Business Objective**")
+    st.write(p.get("business_objective", ""))
+    if p.get("business_value"):
+        st.markdown("**Business Value**")
+        st.write(p.get("business_value", ""))
 
-        st.markdown(f"**Optional: attach supporting documents** "
-                    f"({', '.join(e.upper() for e in SUPPORTED_EXTENSIONS)})")
-        st.caption("Business requirement docs, meeting notes, transcripts, business cases — "
-                    "multiple files supported.")
-        uploaded_files = st.file_uploader(
-            "Upload files", type=SUPPORTED_EXTENSIONS, accept_multiple_files=True,
-            label_visibility="collapsed"
-        )
-
-        col_a, col_b = st.columns([1, 5])
-        with col_a:
-            proceed = st.button("Analyze →", type="primary", width='stretch')
-
-        if proceed:
-            if not user_text.strip() and not uploaded_files:
-                st.warning("Please provide a description or upload at least one document.")
-                st.stop()
-
-            ss.idea_fields["_user_text"] = user_text
-            ss.idea_draft_id = ss.idea_draft_id or new_draft_id()
-
-            if uploaded_files:
-                with st.spinner("Extracting content from uploaded documents…"):
-                    ss.idea_documents = extract_all(uploaded_files)
-            else:
-                ss.idea_documents = []
-
-            ss.idea_unified_context = build_unified_context(user_text, ss.idea_documents)
-
-            with st.spinner("AI is identifying the problem statement and business objective…"):
-                ss.idea_autocapture = autocapture_fields(ss.idea_unified_context)
-
-            ss.idea_fields["problem_statement"] = ss.idea_autocapture.get("problem_statement", "")
-            ss.idea_fields["business_objective"] = ss.idea_autocapture.get("business_objective", "")
-
-            goto(2)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 2 — Auto-captured fields (editable)
-# ═══════════════════════════════════════════════════════════════════════════
-elif ss.idea_step == 2:
-    with st.container(border=True):
-        st.subheader("Step 2 — Auto-captured fields")
-
-        if ss.idea_documents:
-            st.markdown("**Document processing results**")
-            st.code(documents_summary(ss.idea_documents), language=None)
-
-        confidence = ss.idea_autocapture.get("confidence", "")
-        grounded_in = ss.idea_autocapture.get("grounded_in", "")
-        if confidence:
-            badge_color = {"high": "#1D9E75", "medium": "#C07A10", "low": "#C0392B"}.get(confidence, "#888")
-            st.markdown(
-                f"<span style='background:{badge_color}1A;color:{badge_color};padding:2px 10px;"
-                f"border-radius:20px;font-size:0.75rem;font-weight:700;'>Confidence: {confidence.title()}</span>",
-                unsafe_allow_html=True)
-            if grounded_in:
-                st.caption(f"Grounded in: {grounded_in}")
-
-        st.write("")
-        st.markdown("**Problem Statement** — Edit if needed")
-        ss.idea_fields["problem_statement"] = st.text_area(
-            "Problem Statement", value=ss.idea_fields.get("problem_statement", ""),
-            height=120, label_visibility="collapsed")
-
-        st.markdown("**Business Objective** — Edit if needed")
-        ss.idea_fields["business_objective"] = st.text_area(
-            "Business Objective", value=ss.idea_fields.get("business_objective", ""),
-            height=100, label_visibility="collapsed")
-
-        if not ss.idea_fields.get("problem_statement", "").strip():
-            st.info("No problem statement could be auto-detected from your input — please write one above before continuing.")
-
-        col_back, col_next = st.columns([1, 1])
-        with col_back:
-            if st.button("← Back", width='stretch'):
-                goto(1)
-        with col_next:
-            if st.button("Continue →", type="primary", width='stretch'):
-                if not ss.idea_fields.get("problem_statement", "").strip():
-                    st.warning("Problem Statement is required.")
-                    st.stop()
-                goto(3)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 3 — Business Value / Workflow Location / Decision Support
-# (asked directly of the user — never invented by the LLM)
-# ═══════════════════════════════════════════════════════════════════════════
-elif ss.idea_step == 3:
-    with st.container(border=True):
-        st.subheader("Step 3 — Key business details")
-        st.caption("These are always confirmed with you directly — AI will not invent business value.")
-
-        st.markdown(f"**{QUESTION_MAP.get('business_value', 'What measurable business value is expected?')}**")
-        st.caption("Examples: annual cost savings, revenue increase, productivity improvement, "
-                    "time saved, customer satisfaction improvement. Be specific and quantified — avoid vague entries.")
-        business_value = st.text_area(
-            "Business value", value=ss.idea_fields.get("business_value", ""),
-            height=90, label_visibility="collapsed",
-            placeholder="e.g. Reduce average claims processing time by 30%, saving ~$450K/year in labor costs")
-
-        st.markdown(f"**{QUESTION_MAP.get('workflow_location', 'Where in the workflow does this problem occur?')}**")
-        st.caption("Examples: Claims Processing, Customer Support, Manufacturing, Procurement, Supply Chain, HR Operations.")
-        workflow_location = st.text_input(
-            "Workflow location", value=ss.idea_fields.get("workflow_location", ""),
-            label_visibility="collapsed", placeholder="e.g. Claims Processing")
-
-        st.markdown(f"**{QUESTION_MAP.get('decision_support', 'What decisions should the AI assist with?')}**")
-        st.caption("Examples: approval decisions, prioritization, routing, classification, recommendations.")
-        decision_support = st.text_area(
-            "Decision support", value=ss.idea_fields.get("decision_support", ""),
-            height=90, label_visibility="collapsed",
-            placeholder="e.g. Recommend approve/deny/escalate on each incoming claim")
-
-        col_back, col_next = st.columns([1, 1])
-        with col_back:
-            if st.button("← Back", width='stretch', key="b3"):
-                goto(2)
-        with col_next:
-            if st.button("Continue →", type="primary", width='stretch', key="n3"):
-                empty = []
-                if not business_value.strip():
-                    empty.append("business value")
-                if not workflow_location.strip():
-                    empty.append("workflow location")
-                if not decision_support.strip():
-                    empty.append("decision support")
-                if empty:
-                    st.warning(f"Please provide: {', '.join(empty)}.")
-                    st.stop()
-
-                ss.idea_fields["business_value"] = business_value.strip()
-                ss.idea_fields["workflow_location"] = workflow_location.strip()
-                ss.idea_fields["decision_support"] = decision_support.strip()
-                ss.idea_current_proposal = None
-                goto(4)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 4 — AI Proposed Solution + validation loop
-# ═══════════════════════════════════════════════════════════════════════════
-elif ss.idea_step == 4:
-    with st.container(border=True):
-        st.subheader("Step 4 — AI-proposed solution")
-
-        if ss.idea_current_proposal is None:
-            with st.spinner("AI is proposing a solution…"):
-                proposal = propose_solution(ss.idea_fields, ss.idea_clarification_qa)
-            ss.idea_proposal_round += 1
-            ss.idea_current_proposal = proposal
-            db_save_solution_proposal(ss.idea_draft_id, ss.idea_proposal_round, proposal,
-                                       accepted=False, clarification_qa=ss.idea_clarification_qa)
-
-        proposal = ss.idea_current_proposal
-
+    st.markdown("**Decision Support System Architecture**")
+    for i, eng in enumerate(p.get("engines", [])):
+        c = ENGINE_COLORS[i % len(ENGINE_COLORS)]
         st.markdown(f"""
-        <div style="background:#F7F7FF;border:1.5px solid #C5C1FF;border-radius:14px;padding:1.2rem 1.6rem;">
-          <div style="font-size:0.7rem;color:#6C63FF;font-weight:700;letter-spacing:0.08em;">
-            PROPOSED SOLUTION — ROUND {ss.idea_proposal_round}
-          </div>
-          <div style="font-size:1.3rem;font-weight:800;color:#1a1a2e;margin-top:4px;">
-            {proposal.get('solution_name', '—')}
-          </div>
-          <div style="font-size:0.78rem;color:#6C63FF;font-weight:700;margin-top:2px;">
-            {proposal.get('solution_type', '')}
-          </div>
-          <div style="font-size:0.85rem;color:#444;margin-top:10px;line-height:1.6;">
-            {proposal.get('solution_description', '')}
+        <div style="border:1.5px solid {c['bar']}55;border-left:4px solid {c['bar']};
+                    border-radius:10px;padding:0.7rem 1rem;margin-bottom:0.5rem;background:{c['bg']};">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="background:{c['badge']};color:white;width:22px;height:22px;border-radius:50%;
+                        display:flex;align-items:center;justify-content:center;font-size:0.75rem;
+                        font-weight:800;flex-shrink:0;margin-top:2px;">{i+1}</div>
+            <div>
+              <div style="font-weight:700;font-size:0.92rem;color:#1a1a2e;">{eng.get('title','')}</div>
+              <div style="font-size:0.83rem;color:#555;margin-top:2px;">{eng.get('description','')}</div>
+            </div>
           </div>
         </div>""", unsafe_allow_html=True)
 
-        benefits = proposal.get("expected_benefits", [])
-        if benefits:
-            st.markdown("**Expected Benefits**")
-            for b in benefits:
-                st.markdown(f"- {b}")
+    st.write("")
+    if st.button("Close", type="primary", width='stretch'):
+        st.rerun()
 
-        assumptions = proposal.get("key_assumptions", [])
-        if assumptions:
-            with st.expander("Key assumptions"):
-                for a in assumptions:
-                    st.markdown(f"- {a}")
-
-        if ss.idea_clarification_qa:
-            with st.expander(f"Clarification history (round {ss.idea_proposal_round - 1} feedback)"):
-                for qa in ss.idea_clarification_qa:
-                    st.markdown(f"**Q:** {qa['question']}\n\n**A:** {qa['answer']}")
-
-        st.write("")
-        st.markdown("**Are you satisfied with the proposed solution?**")
-        col_yes, col_no, col_back = st.columns([1, 1, 1])
-        with col_back:
-            if st.button("← Back to details", width='stretch'):
-                ss.idea_current_proposal = None
-                goto(3)
-        with col_yes:
-            if st.button("✅ Yes, proceed", type="primary", width='stretch'):
-                ss.idea_fields["proposed_solution"] = (
-                    f"{proposal.get('solution_name', '')} ({proposal.get('solution_type', '')}): "
-                    f"{proposal.get('solution_description', '')}"
-                )
-                db_save_solution_proposal(ss.idea_draft_id, ss.idea_proposal_round, proposal,
-                                           accepted=True, clarification_qa=ss.idea_clarification_qa)
-                goto(5)
-        with col_no:
-            if st.button("📈 Get Better Solution", width='stretch'):
-                ss.idea_step = "4_clarify"
-                st.rerun()
-
-elif ss.idea_step == "4_clarify":
-    with st.container(border=True):
-        st.subheader("Help us improve the proposal")
-        st.caption("Answer a few targeted questions so the AI can propose something more specific.")
-
-        if ss.idea_pending_questions is None:
-            with st.spinner("Generating clarification questions…"):
-                q_result = generate_clarification_questions(ss.idea_fields, ss.idea_current_proposal)
-            ss.idea_pending_questions = q_result.get("questions", [])
-
-        answers = {}
-        for q in ss.idea_pending_questions:
-            answers[q["id"]] = st.text_area(q["question"], key=f"clarify_{q['id']}", height=70)
-
-        col_submit, col_skip = st.columns([1, 1])
-        with col_submit:
-            if st.button("Submit answers →", type="primary", width='stretch'):
-                unanswered = [q["question"] for q in ss.idea_pending_questions if not answers.get(q["id"], "").strip()]
-                if unanswered:
-                    st.warning("Please answer all questions, or use 'Skip & retry' to let AI try again without them.")
-                    st.stop()
-                for q in ss.idea_pending_questions:
-                    ss.idea_clarification_qa.append({"question": q["question"], "answer": answers[q["id"]]})
-                ss.idea_current_proposal = None
-                ss.idea_pending_questions = None
-                ss.idea_step = 4
-                st.rerun()
-        with col_skip:
-            if st.button("Skip & retry", width='stretch'):
-                ss.idea_current_proposal = None
-                ss.idea_pending_questions = None
-                ss.idea_step = 4
-                st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 5 — Contradiction Detection
+# STAGE 1 — Intake (business problem + supporting files)
 # ═══════════════════════════════════════════════════════════════════════════
-elif ss.idea_step == 5:
+if ss.m1_stage == "intake":
     with st.container(border=True):
-        st.subheader("Step 5 — Consistency check")
-        st.caption("Comparing what you entered against your uploaded documents for any material contradictions.")
+        st.markdown("**BUSINESS PROBLEM**")
+        user_text = st.text_area(
+            "Business problem", value=ss.m1_fields.get("_user_text", ""),
+            height=160, label_visibility="collapsed",
+            placeholder="Describe the business problem you are trying to solve...",
+        )
 
-        if ss.idea_contradictions is None:
-            doc_only_context = build_unified_context("", ss.idea_documents)
-            if not doc_only_context.strip():
-                ss.idea_contradictions = {"contradictions": [], "has_contradictions": False}
-            else:
-                with st.spinner("Checking for contradictions between your input and uploaded documents…"):
-                    claims = {
-                        "problem_statement": ss.idea_fields.get("problem_statement", ""),
-                        "business_objective": ss.idea_fields.get("business_objective", ""),
-                        "business_value": ss.idea_fields.get("business_value", ""),
-                        "workflow_location": ss.idea_fields.get("workflow_location", ""),
-                        "decision_support": ss.idea_fields.get("decision_support", ""),
-                    }
-                    ss.idea_contradictions = detect_contradictions(claims, doc_only_context)
+    with st.container(border=True):
+        st.markdown("**SUPPORTING FILES**")
+        uploaded_files = st.file_uploader(
+            f"Upload PDF, DOCX, PPT, or video transcript ({', '.join(e.upper() for e in SUPPORTED_EXTENSIONS)})",
+            type=SUPPORTED_EXTENSIONS, accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
 
-        result = ss.idea_contradictions
-        contradictions = result.get("contradictions", [])
+    st.write("")
+    _, col_btn = st.columns([4, 1])
+    with col_btn:
+        proceed = st.button("Proceed →", type="primary", width='stretch')
 
-        # ── Field map: contradiction field label → session state key ─────────
-        FIELD_TO_KEY = {
-            "problem statement":  "problem_statement",
-            "business objective": "business_objective",
-            "business value":     "business_value",
-            "workflow location":  "workflow_location",
-            "decision support":   "decision_support",
-        }
+    if proceed:
+        if not user_text.strip() and not uploaded_files:
+            st.warning("Please provide a description or upload at least one document.")
+            st.stop()
 
-        if not contradictions:
-            st.success("✅ No material contradictions found between your input and uploaded documents.")
+        ss.m1_fields["_user_text"] = user_text
+        ss.m1_draft_id = ss.m1_draft_id or new_draft_id()
+
+        if uploaded_files:
+            with st.spinner("Extracting content from uploaded documents…"):
+                ss.m1_documents = extract_all(uploaded_files)
         else:
-            st.warning(
-                f"⚠️ {len(contradictions)} genuine conflict(s) found where your inputs differ from "
-                f"the uploaded documents. Review each one — you can correct your entry if the "
-                f"document is the authoritative source."
+            ss.m1_documents = []
+
+        ss.m1_unified_context = build_unified_context(user_text, ss.m1_documents)
+
+        with st.spinner("Searching DB for similar projects…"):
+            ss.m1_duplicate = find_similar_problem(ss.m1_unified_context, db_load_all())
+
+        with st.spinner("AI is identifying the problem statement and business objective…"):
+            autocapture = autocapture_fields(ss.m1_unified_context)
+        ss.m1_fields["problem_statement"] = autocapture.get("problem_statement", "")
+        ss.m1_fields["business_objective"] = autocapture.get("business_objective", "")
+        ss.m1_fields["workflow_location"] = autocapture.get("workflow_location", "")
+
+        if ss.m1_duplicate.get("found"):
+            goto("duplicate")
+        else:
+            goto("gaps")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 2 — Similar Project Found
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "duplicate":
+    dup = ss.m1_duplicate or {}
+    with st.container(border=True):
+        st.markdown("⚠️ **:orange[SIMILAR PROJECT FOUND]**")
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.caption("Project ID")
+            st.markdown(f"**{dup.get('project_id','—')}**")
+            st.write("")
+            st.caption("Title")
+            st.markdown(f"**{dup.get('title','—')}**")
+        with col_r:
+            st.caption("Status")
+            st.markdown(
+                f"<span style='background:#D1F5EA;color:#1D9E75;padding:2px 12px;border-radius:14px;"
+                f"font-size:0.8rem;font-weight:700;'>{dup.get('status','Unknown')}</span>",
+                unsafe_allow_html=True)
+            st.write("")
+            st.caption("Business Unit")
+            st.markdown(f"**{dup.get('business_unit','—')}**")
+        if dup.get("reason"):
+            st.caption(dup["reason"])
+
+    with st.container(border=True):
+        st.markdown("**A similar problem appears to have been solved earlier. Do you still want to submit this as a new idea?**")
+        choice = st.radio(
+            "Choice", ["Yes, submit as a new idea", "No, refer to the existing project"],
+            label_visibility="collapsed", key="m1_dup_radio",
+        )
+
+        justification = ""
+        if choice.startswith("Yes"):
+            st.markdown("**PLEASE EXPLAIN WHY A NEW SUBMISSION IS WARRANTED**")
+            justification = st.text_area(
+                "Justification", height=110, label_visibility="collapsed",
+                placeholder="Enter your justification here...", key="m1_dup_justification",
             )
 
-            for i, c in enumerate(contradictions, start=1):
-                conf = c.get("confidence_pct", 0)
-                conf_color = "#C0392B" if conf >= 80 else "#C07A10"
-                corr_key   = f"idea_correction_applied_{i}"
-                ss.setdefault(corr_key, False)
-
-                # ── Contradiction card ────────────────────────────────────────
-                st.markdown(f"""
-                <div style="background:#FFF8F0;border:1.5px solid {conf_color}55;
-                            border-radius:12px;padding:1rem 1.3rem;margin-bottom:0.3rem;">
-                  <div style="font-size:0.7rem;color:{conf_color};font-weight:700;
-                              letter-spacing:0.06em;">
-                    INCONSISTENCY #{i} — {conf}% CONFIDENCE
-                  </div>
-                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
-                    <div style="background:#FFF0F0;border-radius:8px;padding:0.6rem 0.8rem;">
-                      <div style="font-size:0.68rem;color:{conf_color};font-weight:700;
-                                  text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">
-                        What you entered
-                      </div>
-                      <div style="font-size:0.83rem;color:#1a1a2e;">
-                        "{c.get('user_input','')}"
-                      </div>
-                    </div>
-                    <div style="background:#FEF9EE;border-radius:8px;padding:0.6rem 0.8rem;">
-                      <div style="font-size:0.68rem;color:{conf_color};font-weight:700;
-                                  text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">
-                        Document says — {c.get('source_file','')} ({c.get('source_location','')})
-                      </div>
-                      <div style="font-size:0.83rem;color:#1a1a2e;">
-                        "{c.get('extracted_statement','')}"
-                      </div>
-                    </div>
-                  </div>
-                  <div style="margin-top:8px;font-size:0.78rem;color:#666;font-style:italic;">
-                    {c.get('explanation','')}
-                  </div>
-                </div>""", unsafe_allow_html=True)
-
-                # ── Correction applied badge ──────────────────────────────────
-                if ss[corr_key]:
-                    st.markdown(
-                        "<div style='background:#D1F5EA;border-radius:6px;padding:4px 12px;"
-                        "font-size:0.78rem;color:#1D9E75;font-weight:700;margin-bottom:0.5rem;'>"
-                        "✅ Correction applied</div>",
-                        unsafe_allow_html=True
-                    )
-
-                # ── Correct this expander ─────────────────────────────────────
-                with st.expander(f"✏️ Correct inconsistency #{i}", expanded=False):
-                    st.caption(
-                        "Pick which field this correction applies to, enter the corrected value, "
-                        "and click Apply. The corrected value will be used when you save."
-                    )
-
-                    field_options = [
-                        "Problem Statement",
-                        "Business Objective",
-                        "Business Value",
-                        "Workflow Location",
-                        "Decision Support",
-                    ]
-
-                    # Pre-select the field closest to what the LLM flagged
-                    user_input_lower = c.get("user_input", "").lower()
-                    default_idx = 0
-                    for fi, fo in enumerate(field_options):
-                        if fo.lower() in user_input_lower or any(
-                            w in user_input_lower for w in fo.lower().split()
-                        ):
-                            default_idx = fi
-                            break
-
-                    col_field, col_val = st.columns([1, 2])
-                    with col_field:
-                        selected_field = st.selectbox(
-                            "Field to correct",
-                            field_options,
-                            index=default_idx,
-                            key=f"contra_field_sel_{i}",
-                        )
-                    with col_val:
-                        corrected_value = st.text_area(
-                            "Corrected value",
-                            value=c.get("extracted_statement", ""),
-                            height=80,
-                            key=f"contra_val_{i}",
-                            help=f"Document source: {c.get('source_file','')} — {c.get('source_location','')}",
-                        )
-
-                    reason = st.text_input(
-                        "Reason (optional)",
-                        placeholder="e.g. Document figure is from the approved business case",
-                        key=f"contra_reason_{i}",
-                    )
-
-                    if st.button(
-                        f"Apply correction to '{selected_field}'",
-                        key=f"contra_apply_{i}",
-                        type="primary",
-                    ):
-                        session_key = FIELD_TO_KEY.get(selected_field.lower())
-                        if session_key and corrected_value.strip():
-                            ss.idea_fields[session_key] = corrected_value.strip()
-                            ss[corr_key] = True
-                            # Stamp the correction onto the contradiction record so
-                            # it's saved to the DB with the corrected value
-                            c["corrected_to"] = corrected_value.strip()
-                            c["correction_field"] = selected_field
-                            c["correction_reason"] = reason.strip()
-                            st.success(
-                                f"✅ **{selected_field}** updated to the corrected value. "
-                                f"It will be used when you save in Step 6."
-                            )
-                            st.rerun()
-                        else:
-                            st.warning("Please enter a corrected value before applying.")
-
-                st.write("")  # breathing room between cards
-
-        st.write("")
-        col_back, col_next = st.columns([1, 1])
-        with col_back:
-            if st.button("← Back", width='stretch'):
-                ss.idea_contradictions = None
-                # clear any correction flags so re-running the check starts fresh
-                for k in list(ss.keys()):
-                    if k.startswith("idea_correction_applied_"):
-                        del ss[k]
-                goto(4)
-        with col_next:
-            label = "Continue →" if not contradictions else "Acknowledge & continue →"
-            if st.button(label, type="primary", width='stretch'):
-                goto(6)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 6 — Review & Save
-# ═══════════════════════════════════════════════════════════════════════════
-elif ss.idea_step == 6:
-    with st.container(border=True):
-        st.subheader("Step 6 — Review & Save")
-
-        sensitivity_options = ["Public", "Internal", "Confidential", "Personal Data (PII)"]
-
-        review_left, review_right = st.columns(2)
-        with review_left:
-            ss.idea_fields["problem_statement"] = st.text_area(
-                "Problem Statement", value=ss.idea_fields.get("problem_statement", ""), height=110)
-            ss.idea_fields["business_objective"] = st.text_area(
-                "Business Objective", value=ss.idea_fields.get("business_objective", ""), height=110)
-            ss.idea_fields["proposed_solution"] = st.text_area(
-                "Proposed Solution", value=ss.idea_fields.get("proposed_solution", ""), height=110)
-            ss.idea_fields["business_value"] = st.text_area(
-                "Business Value", value=ss.idea_fields.get("business_value", ""), height=90)
-
-        with review_right:
-            ss.idea_fields["workflow_location"] = st.text_input(
-                "Workflow Location", value=ss.idea_fields.get("workflow_location", ""))
-            ss.idea_fields["decision_support"] = st.text_area(
-                "Decision Support", value=ss.idea_fields.get("decision_support", ""), height=90)
-
-        if ss.idea_documents:
-            with st.expander(f"📎 {len(ss.idea_documents)} document(s) attached"):
-                st.code(documents_summary(ss.idea_documents), language=None)
-
-        if ss.idea_contradictions and ss.idea_contradictions.get("contradictions"):
-            st.caption(f"⚠️ {len(ss.idea_contradictions['contradictions'])} contradiction(s) were flagged in Step 5 "
-                       f"and will be saved alongside this submission for governance review.")
-
-        st.write("")
-        col_back, col_save = st.columns([1, 1])
-        with col_back:
-            if st.button("← Back", width='stretch'):
-                goto(5)
-        with col_save:
-            if st.button("💾 Save Idea", type="primary", width='stretch'):
-                missing = get_missing_fields({
-                    "problem_statement": ss.idea_fields.get("problem_statement", ""),
-                    "business_objective": ss.idea_fields.get("business_objective", ""),
-                    "proposed_solution": ss.idea_fields.get("proposed_solution", ""),
-                    "business_value": ss.idea_fields.get("business_value", ""),
-                    "workflow_location": ss.idea_fields.get("workflow_location", ""),
-                    "decision_support": ss.idea_fields.get("decision_support", ""),
-                })
-                if missing:
-                    st.error(f"Cannot save. Missing: {', '.join(missing)}")
+    st.write("")
+    col_back, _, col_btn = st.columns([1, 3, 1])
+    with col_back:
+        if st.button("← Back", width='stretch'):
+            go_back("intake")
+    with col_btn:
+        if choice.startswith("Yes"):
+            if st.button("Approve & Proceed →", type="primary", width='stretch'):
+                if not justification.strip():
+                    st.warning("Please explain why a new submission is warranted.")
                     st.stop()
+                ss.m1_fields["duplicate_justification"] = justification.strip()
+                goto("gaps")
+        else:
+            st.button("Approve & Proceed →", type="primary", width='stretch', disabled=True)
 
-                record_id = save_problem_v2(ss.idea_fields, record_id=ss.idea_draft_id)
-
-                if ss.idea_documents and not ss.idea_documents_saved:
-                    db_save_uploaded_documents(record_id, ss.idea_documents)
-                    ss.idea_documents_saved = True
-
-                if ss.idea_contradictions and ss.idea_contradictions.get("contradictions"):
-                    db_save_contradiction_flags(record_id, ss.idea_contradictions["contradictions"])
-
-                ss.idea_saved_record_id = record_id
-                st.rerun()
-
-    if ss.get("idea_saved_record_id"):
-        st.success(f"✅ Idea saved as **{ss.idea_saved_record_id}**. You can track it in Feasibility Assessment, "
-                   f"Gain-Pain Analysis, or Governance Review.")
-        if st.button("Submit another idea"):
+    if not choice.startswith("Yes"):
+        st.info(f"This idea has been matched to existing project **{dup.get('project_id','—')}**. "
+                f"You can review it in Assessment or Governance Board, or start a new submission.")
+        if st.button("Start over"):
             restart()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 3 — Gaps / Discrepancies Found
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "gaps":
+    if ss.m1_gaps is None:
+        doc_only_context = build_unified_context("", ss.m1_documents)
+        if len(ss.m1_documents) < 2 or not doc_only_context.strip():
+            ss.m1_gaps = {"gaps": []}
+        else:
+            with st.spinner("Checking uploaded documents for gaps and discrepancies…"):
+                ss.m1_gaps = detect_gaps(doc_only_context)
+
+    gaps = ss.m1_gaps.get("gaps", [])
+
+    if not gaps:
+        # Nothing to resolve — skip straight through automatically.
+        goto("value")
+    else:
+        with st.container(border=True):
+            st.markdown("⚠️ **Gaps / Discrepancies Found**")
+            st.write("")
+            for i, g in enumerate(gaps, start=1):
+                st.markdown(f"""
+                <div style="background:#FFF8E8;border:1px solid #F4D58D;border-radius:10px;
+                            padding:0.8rem 1.1rem;margin-bottom:0;">
+                  <div style="font-size:0.78rem;color:#B8860B;font-weight:700;">Gap {i}</div>
+                  <div style="font-size:0.88rem;color:#1a1a2e;margin-top:2px;">{g.get('description','')}</div>
+                </div>""", unsafe_allow_html=True)
+                st.markdown("<div style='font-size:0.78rem;color:#1D9E75;font-weight:700;margin:6px 0 2px 2px;'>Resolution (editable)</div>", unsafe_allow_html=True)
+                g["resolution"] = st.text_area(
+                    f"Resolution {i}", value=g.get("resolution", ""), height=80,
+                    label_visibility="collapsed", key=f"m1_gap_resolution_{i}",
+                )
+                st.write("")
+
+        st.write("")
+        col_back, _, col_btn = st.columns([1, 3, 1])
+        with col_back:
+            if st.button("← Back", width='stretch'):
+                go_back("intake")
+        with col_btn:
+            if st.button("Approve & Proceed →", type="primary", width='stretch'):
+                ss.m1_fields["gap_resolutions"] = [g.get("resolution", "") for g in gaps]
+                goto("value")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 4 — Business Value Clarification
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "value":
+    if not ss.m1_value_question:
+        with st.spinner("Preparing your business value question…"):
+            ss.m1_value_question = generate_business_value_question(ss.m1_fields)
+
+    with st.container(border=True):
+        st.markdown("📊 **Business Value Clarification**")
+        st.write(ss.m1_value_question)
+        business_value = st.text_area(
+            "Business value", value=ss.m1_fields.get("business_value", ""),
+            height=110, label_visibility="collapsed",
+            placeholder="Enter your business value estimate here...",
+        )
+
+    st.write("")
+    col_back, _, col_btn = st.columns([1, 3, 1])
+    with col_back:
+        if st.button("← Back", width='stretch'):
+            go_back("intake")
+    with col_btn:
+        if st.button("Approve & Proceed →", type="primary", width='stretch'):
+            if not business_value.strip():
+                st.warning("Please provide a business value estimate.")
+                st.stop()
+            ss.m1_fields["business_value"] = business_value.strip()
+            goto("engines")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 5 — Decision Support Systems Required
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "engines":
+    if ss.m1_engines_result is None:
+        with st.spinner("Designing the decision support system…"):
+            ss.m1_engines_result = propose_decision_engines(ss.m1_fields)
+        ss.m1_engine_states = {}
+
+    engines = ss.m1_engines_result.get("engines", [])
+
+    with st.container(border=True):
+        col_title, col_reason = st.columns([5, 1])
+        with col_title:
+            st.markdown("🔗 **Decision Support Systems Required**")
+            st.caption("Review each engine and approve or ignore it for this proposal.")
+        with col_reason:
+            if st.button("🧠 Reasoning", width='stretch'):
+                ss.m1_show_reasoning = not ss.m1_show_reasoning
+
+        if ss.m1_show_reasoning and ss.m1_engines_result.get("rationale"):
+            st.info(ss.m1_engines_result["rationale"])
+
+        st.write("")
+        for i, eng in enumerate(engines):
+            c = ENGINE_COLORS[i % len(ENGINE_COLORS)]
+            state = ss.m1_engine_states.get(i)
+            st.markdown(f"""
+            <div style="border:1.5px solid {c['bar']}55;border-left:4px solid {c['bar']};
+                        border-radius:10px;padding:0.8rem 1.1rem;background:{c['bg']};margin-bottom:0;">
+              <div style="display:flex;align-items:flex-start;gap:10px;">
+                <div style="background:{c['badge']};color:white;width:24px;height:24px;border-radius:50%;
+                            display:flex;align-items:center;justify-content:center;font-size:0.8rem;
+                            font-weight:800;flex-shrink:0;">{i+1}</div>
+                <div>
+                  <div style="font-weight:700;font-size:0.95rem;color:#1a1a2e;">{eng.get('title','')}</div>
+                  <div style="font-size:0.84rem;color:#555;margin-top:2px;">{eng.get('description','')}</div>
+                </div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+            if state == "approved":
+                col_a, col_b = st.columns([5, 1])
+                with col_a:
+                    st.markdown("<span style='color:#1D9E75;font-weight:700;'>✅ Approved</span>", unsafe_allow_html=True)
+                with col_b:
+                    if st.button("undo", key=f"undo_{i}"):
+                        ss.m1_engine_states[i] = None
+                        st.rerun()
+            elif state == "ignored":
+                col_a, col_b = st.columns([5, 1])
+                with col_a:
+                    st.markdown("<span style='color:#999;font-weight:700;'>✕ Ignored</span>", unsafe_allow_html=True)
+                with col_b:
+                    if st.button("undo", key=f"undo_{i}"):
+                        ss.m1_engine_states[i] = None
+                        st.rerun()
+            else:
+                col_a, col_b, _ = st.columns([1, 1, 3])
+                with col_a:
+                    if st.button("✓ Approve", key=f"approve_{i}", type="primary"):
+                        ss.m1_engine_states[i] = "approved"
+                        st.rerun()
+                with col_b:
+                    if st.button("✕ Ignore", key=f"ignore_{i}"):
+                        ss.m1_engine_states[i] = "ignored"
+                        st.rerun()
+            st.write("")
+
+    st.write("")
+    col_back, _, col_btn = st.columns([1, 3, 1])
+    with col_back:
+        if st.button("← Back", width='stretch'):
+            go_back("value")
+    with col_btn:
+        all_reviewed = engines and all(ss.m1_engine_states.get(i) for i in range(len(engines)))
+        if st.button("Approve & Proceed →", type="primary", width='stretch', disabled=not all_reviewed):
+            goto("review")
+        if not all_reviewed:
+            st.caption("Approve or ignore every engine to continue.")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 6 — Review & Approval
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "review":
+    with st.container(border=True):
+        st.markdown("✅ **Review & Approval**")
+        st.write("The proposal has been prepared. Do you approve or would you like to edit?")
+        col_approve, col_edit = st.columns([1, 1])
+        with col_approve:
+            approve_clicked = st.button("✓ Approve", type="primary", width='stretch')
+        with col_edit:
+            edit_clicked = st.button("✎ Edit", width='stretch')
+
+        if edit_clicked:
+            st.info("Edit mode coming soon. Please contact your project manager to request changes.")
+
+        if approve_clicked:
+            engines = ss.m1_engines_result.get("engines", [])
+            approved_engines = [e for i, e in enumerate(engines) if ss.m1_engine_states.get(i) == "approved"]
+
+            problem_title = (ss.m1_fields.get("problem_statement", "") or "Untitled Problem")[:90]
+            proposal = {
+                "title": f"{problem_title} — Decision Support System",
+                "problem_statement": ss.m1_fields.get("problem_statement", ""),
+                "business_objective": ss.m1_fields.get("business_objective", ""),
+                "business_value": ss.m1_fields.get("business_value", ""),
+                "business_unit": ss.m1_fields.get("workflow_location", ""),
+                "status": "Approved",
+                "engines": approved_engines,
+                "generated_at": datetime.now().strftime("%d/%m/%Y"),
+            }
+
+            with st.spinner("Generating Business Proposal…"):
+                record_id = save_problem_v2({
+                    "problem_statement": proposal["problem_statement"],
+                    "business_objective": proposal["business_objective"],
+                    "business_value": proposal["business_value"],
+                    "workflow_location": proposal["business_unit"],
+                    "decision_support": "; ".join(e.get("title", "") for e in approved_engines),
+                    "proposed_solution": proposal["title"],
+                }, record_id=ss.m1_draft_id)
+
+                if ss.m1_documents:
+                    db_save_uploaded_documents(record_id, ss.m1_documents)
+
+                db_save_decision_proposal(record_id, proposal)
+
+            ss.m1_saved_record_id = record_id
+            ss.m1_proposal = proposal
+            goto("done")
+
+    st.write("")
+    if st.button("← Back"):
+        go_back("engines")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 7 — Proposal Generated Successfully
+# ═══════════════════════════════════════════════════════════════════════════
+elif ss.m1_stage == "done":
+    if ss.m1_proposal is None and ss.m1_saved_record_id:
+        loaded = db_load_decision_proposal(ss.m1_saved_record_id)
+        if loaded:
+            ss.m1_proposal = loaded
+
+    with st.container(border=True):
+        col_icon, col_text, col_btn = st.columns([0.5, 5, 1.5])
+        with col_icon:
+            st.markdown("<div style='font-size:1.6rem;'>✅</div>", unsafe_allow_html=True)
+        with col_text:
+            st.markdown("<span style='color:#1D9E75;font-weight:700;font-size:1.05rem;'>Proposal Generated Successfully</span>",
+                        unsafe_allow_html=True)
+            st.caption(f"Your business proposal document is ready · saved as **{ss.m1_saved_record_id}**")
+        with col_btn:
+            if st.button("View Proposal", type="primary", width='stretch'):
+                proposal_dialog()
+
+    st.write("")
+    st.success("You can track this idea in Assessment or Governance Board.")
+    if st.button("Submit another idea"):
+        restart()

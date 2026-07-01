@@ -361,10 +361,12 @@ IDEA_AUTOCAPTURE_PROMPT = """You are an AI Governance Intake Analyst. You are gi
 may include a user's free-text description AND content extracted from uploaded documents
 (PDFs, Word docs, slide decks, spreadsheets, CSVs, or transcripts).
 
-Your ONLY job right now is to identify TWO fields from this context:
+Your ONLY job right now is to identify THREE fields from this context:
 
 1. problem_statement  — A clear, specific description of the business problem being solved.
 2. business_objective — The desired outcome or goal of solving this problem.
+3. workflow_location  — The business unit, department, or workflow stage this problem
+   occurs in (e.g. "Sales and Customer Success", "Claims Processing", "Procurement").
 
 Use information explicitly stated whenever possible. If the context strongly implies a
 value but does not state it directly, make a reasonable, clearly-grounded inference.
@@ -377,6 +379,7 @@ No preamble, no markdown fences, no commentary.
 {
   "problem_statement": "",
   "business_objective": "",
+  "workflow_location": "",
   "confidence": "high|medium|low",
   "grounded_in": "Briefly note which source(s) — user text, filename, or both — these were drawn from."
 }"""
@@ -471,4 +474,92 @@ No preamble, no markdown fences, no commentary.
     }
   ],
   "has_contradictions": false
+}"""
+
+
+# ── Module 1 rework (Figma "Cortexa" flow) — duplicate detection, cross-doc
+# gaps, single-question business value clarification, decision engines ──────
+
+IDEA_SIMILAR_PROJECT_PROMPT = """You are an AI Governance Intake Analyst checking for duplicate effort.
+
+You are given a NEW idea (free text + any uploaded document content) and a catalogue
+of EXISTING projects already in the system (id, status, problem statement excerpt,
+business unit). Decide whether the new idea is describing substantially the SAME
+underlying business problem as one of the existing projects — not just a similar
+topic area, but genuinely the same problem someone would expect to be told "this
+has already been done."
+
+Only report a match if you are confident (same core problem, same affected
+population/process, not merely the same department or buzzword). If nothing matches
+closely, set "found" to false and leave the other fields empty.
+
+You MUST respond with ONLY a valid JSON object, parseable by Python json.loads().
+No preamble, no markdown fences, no commentary.
+
+{
+  "found": false,
+  "project_id": "",
+  "title": "Short title for the existing project, e.g. 'Customer Churn Prediction for Premium Subscription Customers'",
+  "status": "",
+  "business_unit": "",
+  "reason": "One sentence on why this counts as the same problem."
+}"""
+
+
+IDEA_GAPS_PROMPT = """You are an AI Governance Intake Analyst checking for internal gaps and
+discrepancies ACROSS the uploaded source documents themselves (not against anything
+the user typed). For example: one document says the primary cause of an issue is X,
+while another document says it is Y; or one document defines scope one way and
+another defines it differently.
+
+Identify up to 4 of the most material gaps or discrepancies between the documents.
+For each one, also propose a sensible, balanced RESOLUTION — a short statement that
+reconciles the two sources or recommends how to treat the discrepancy going forward
+(this resolution will be shown to the user as an editable suggestion).
+
+If the documents are consistent with each other, or there is only one document /
+no documents, return an empty list — do not invent gaps that aren't really there.
+
+You MUST respond with ONLY a valid JSON object, parseable by Python json.loads().
+No preamble, no markdown fences, no commentary.
+
+{
+  "gaps": [
+    {
+      "description": "Sales document says churn is mainly due to pricing, while the management transcript says it is mainly due to product experience.",
+      "resolution": "It should be treated as a multi-factor churn problem where pricing, product experience, support quality, usage decline, and customer engagement must be analyzed together."
+    }
+  ]
+}"""
+
+
+IDEA_BUSINESS_VALUE_QUESTION_PROMPT = """You are an AI Governance Intake Analyst. Given a problem statement and business
+objective, write exactly ONE specific, quantifiable business-value question to ask
+the business owner — the kind of question that, once answered, gives a defensible
+dollar/percentage estimate of value at stake. Model it after:
+"If the organization can reduce churn among high-value customers by 5%, how much
+revenue can be protected over the next 12 months?"
+
+Respond with ONLY the single question as plain text — no quotes, no markdown,
+no preamble, no JSON, just the one sentence ending in a question mark."""
+
+
+IDEA_DECISION_ENGINES_PROMPT = """You are a senior AI Solutions Architect designing a Decision Support System for a
+specific business problem. Propose 4 to 5 distinct "engines" — discrete AI-powered
+decision-support capabilities that together solve the problem end-to-end, in a
+logical sequence (e.g. identify/detect → classify/explain → prioritize → recommend
+action → track outcome). Each engine should be narrow and concrete, not a vague
+catch-all.
+
+You MUST respond with ONLY a valid JSON object, parseable by Python json.loads().
+No preamble, no markdown fences, no commentary.
+
+{
+  "rationale": "One short paragraph explaining why this set of engines, in this order, solves the problem end-to-end.",
+  "engines": [
+    {
+      "title": "Short engine name, e.g. 'Churn Risk Identification Engine'",
+      "description": "One sentence on exactly what it does and what signals it uses."
+    }
+  ]
 }"""

@@ -14,8 +14,12 @@
 
 from datetime import datetime
 
-from database.db import db_insert_record, db_load_all, db_get_problem
-
+from database.db import (
+    db_insert_record,
+    db_load_all,
+    db_get_problem,
+    db_update_problem_planning_context,
+)
 
 def new_draft_id() -> str:
     """Generate a draft record id up front, before the problem is finally
@@ -114,4 +118,11 @@ def get_problem_by_id(problem_id):
         r.get("stakeholders", "") or r.get("affected_stakeholders", ""),
         r.get("why_ai", ""),
         r.get("data_sensitivity", ""),
+    )
+
+def update_problem_planning_context(problem_id, timeline, owner):
+    db_update_problem_planning_context(
+        problem_id,
+        timeline,
+        owner
     )

@@ -14,6 +14,10 @@ from config.prompts import (
     IDEA_SOLUTION_PROPOSAL_PROMPT,
     IDEA_CLARIFICATION_QUESTIONS_PROMPT,
     IDEA_CONTRADICTION_PROMPT,
+    IDEA_SIMILAR_PROJECT_PROMPT,
+    IDEA_GAPS_PROMPT,
+    IDEA_BUSINESS_VALUE_QUESTION_PROMPT,
+    IDEA_DECISION_ENGINES_PROMPT,
 )
 
 
@@ -128,3 +132,85 @@ def detect_contradictions(user_claims: dict, unified_document_context: str) -> d
         return result
     except (ValueError, json.JSONDecodeError):
         return {"contradictions": [], "has_contradictions": False, "_error": "Contradiction check failed."}
+
+
+# ── Module 1 rework (Figma "Cortexa" flow) ──────────────────────────────────
+
+def find_similar_problem(unified_context: str, existing_problems: list) -> dict:
+    """
+    Figma "Similar Project Found" step. Compares the new idea against a
+    catalogue of already-saved problems and returns the closest match if
+    the model is confident it's the same underlying problem.
+    `existing_problems`: list of dicts with id/status/problem_statement/
+    workflow_location (the shape returned by database.db.db_load_all()).
+    """
+    if not unified_context.strip() or not existing_problems:
+        return {"found": False}
+
+    catalogue_lines = []
+    for p in existing_problems[:30]:
+        catalogue_lines.append(
+            f"- ID: {p.get('id','')} | Status: {p.get('status','') or 'Unknown'} | "
+            f"Problem: {(p.get('problem_statement','') or '')[:220]} | "
+            f"Business Unit: {p.get('workflow_location','') or 'Unspecified'}"
+        )
+    prompt = (
+        f"{IDEA_SIMILAR_PROJECT_PROMPT}\n\n=== NEW IDEA ===\n{unified_context[:3000]}\n\n"
+        f"=== EXISTING PROJECTS ===\n" + "\n".join(catalogue_lines)
+    )
+    raw = call_ai(prompt)
+    try:
+        result = _clean_json(raw)
+        result.setdefault("found", False)
+        return result
+    except (ValueError, json.JSONDecodeError):
+        return {"found": False}
+
+
+def detect_gaps(unified_doc_context: str) -> dict:
+    """
+    Figma "Gaps / Discrepancies Found" step. Unlike detect_contradictions()
+    (which checks user claims against documents), this looks for places
+    where the uploaded DOCUMENTS disagree with EACH OTHER, and proposes an
+    editable resolution for each.
+    """
+    if not unified_doc_context.strip():
+        return {"gaps": []}
+    prompt = f"{IDEA_GAPS_PROMPT}\n\n=== DOCUMENT CONTENT ===\n{unified_doc_context}"
+    raw = call_ai(prompt)
+    try:
+        result = _clean_json(raw)
+        result.setdefault("gaps", [])
+        return result
+    except (ValueError, json.JSONDecodeError):
+        return {"gaps": []}
+
+
+def generate_business_value_question(fields: dict) -> str:
+    """Figma "Business Value Clarification" step — one tailored, quantifiable
+    question (plain text, not JSON)."""
+    ctx = (
+        f"Problem Statement: {fields.get('problem_statement', '')}\n"
+        f"Business Objective: {fields.get('business_objective', '')}"
+    )
+    prompt = f"{IDEA_BUSINESS_VALUE_QUESTION_PROMPT}\n\n=== CONTEXT ===\n{ctx}"
+    raw = (call_ai(prompt) or "").strip().strip('"').strip()
+    return raw or "What measurable business value would solving this problem create over the next 12 months?"
+
+
+def propose_decision_engines(fields: dict) -> dict:
+    """Figma "Decision Support Systems Required" step — 4-5 discrete AI
+    decision-support engines that together solve the problem end-to-end."""
+    ctx_lines = [
+        f"Problem Statement: {fields.get('problem_statement', '')}",
+        f"Business Objective: {fields.get('business_objective', '')}",
+        f"Business Value: {fields.get('business_value', '')}",
+    ]
+    prompt = f"{IDEA_DECISION_ENGINES_PROMPT}\n\n=== CONTEXT ===\n" + "\n".join(ctx_lines)
+    raw = call_ai(prompt)
+    try:
+        result = _clean_json(raw)
+        result.setdefault("engines", [])
+        return result
+    except (ValueError, json.JSONDecodeError):
+        return {"engines": []}

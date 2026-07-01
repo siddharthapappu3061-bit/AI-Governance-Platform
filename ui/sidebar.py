@@ -129,7 +129,7 @@ def render_sidebar(active: str = "landing"):
             st.markdown('<div class="cx-workflow-label">WORKFLOW</div>', unsafe_allow_html=True)
 
             assessment_active = active in ("m2", "m3")
-            review_active = active in ("m2")
+            review_active = active == "m4"
             governance_active = active in ("m4", "m5")
 
             for code, label, target in WORKFLOW_ITEMS:

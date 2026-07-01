@@ -56,7 +56,13 @@ def init_db():
     for col in ["iso_risk_category", "affected_stakeholders", "human_override",
                 "data_sources", "success_criteria",
                 # Friend's Module 1 fields
-                "stakeholders", "why_ai", "data_sensitivity"]:
+                "stakeholders", "why_ai", "data_sensitivity",
+                # Referenced by db_insert_record()'s cols list but missing from
+                # both CREATE TABLE above and this bulletproofing loop until now —
+                # any pre-existing on-disk DB created before this fix would hit
+                # "table problem_statements has no column named timeline" the
+                # moment save_problem()/save_problem_v2() was first called.
+                "timeline", "action_owner"]:
         if col not in existing:
             conn.execute(f"ALTER TABLE problem_statements ADD COLUMN {col} TEXT")
 
@@ -219,6 +225,20 @@ def db_get_problem(problem_id: str) -> dict | None:
 def db_update_status(record_id: str, new_status: str):
     conn = get_conn()
     conn.execute("UPDATE problem_statements SET status=? WHERE id=?", (new_status, record_id))
+    conn.commit()
+    conn.close()
+
+def db_update_problem_planning_context(problem_id: str, timeline: str, owner: str):
+    conn = get_conn()
+
+    conn.execute("""
+        UPDATE problem_statements
+        SET
+            timeline = ?,
+            action_owner = ?
+        WHERE id = ?
+    """, (timeline, owner, problem_id))
+
     conn.commit()
     conn.close()
 
@@ -829,6 +849,19 @@ def init_idea_intake_v2_tables(conn):
             created_at            TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS decision_proposals (
+            problem_id          TEXT PRIMARY KEY,
+            title                TEXT,
+            problem_statement    TEXT,
+            business_objective   TEXT,
+            business_value       TEXT,
+            business_unit        TEXT,
+            status               TEXT,
+            engines_json         TEXT,
+            generated_at         TEXT
+        )
+    """)
 
 
 def db_save_uploaded_documents(problem_id: str, documents: list):
@@ -918,3 +951,36 @@ def db_load_solution_proposals(problem_id: str) -> list:
         d["clarification_qa"] = json.loads(d.get("clarification_qa") or "[]")
         result.append(d)
     return result
+
+
+def db_save_decision_proposal(problem_id: str, data: dict):
+    """Persists the final Module 1 "Business Proposal" doc (Figma's
+    Decision Support System Architecture) — title, problem statement,
+    business objective, business value, business unit, status, and the
+    list of approved/ignored decision engines."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT OR REPLACE INTO decision_proposals
+        (problem_id, title, problem_statement, business_objective, business_value,
+         business_unit, status, engines_json, generated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (problem_id, data.get("title", ""), data.get("problem_statement", ""),
+          data.get("business_objective", ""), data.get("business_value", ""),
+          data.get("business_unit", ""), data.get("status", "Approved"),
+          json.dumps(data.get("engines", [])),
+          datetime.now().strftime("%d/%m/%Y")))
+    conn.commit()
+    conn.close()
+
+
+def db_load_decision_proposal(problem_id: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM decision_proposals WHERE problem_id=?", (problem_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["engines"] = json.loads(d.get("engines_json") or "[]")
+    return d

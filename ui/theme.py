@@ -42,16 +42,23 @@ def apply_global_styles():
     st.markdown("""
         <style>
         .sidebar-logo{
-            display:flex;
-            justify-content:center;
-            margin-top:12px;
-            margin-bottom:18px;
-        }
+    background:#FFFFFF;
 
-        .sidebar-logo img{
-            width:200px;
-            height:auto;
-        }
+    border-radius:14px;
+
+    margin:20px;
+
+    padding:14px;
+
+    text-align:center;
+
+    border:1px solid #E5E7EB;
+}
+
+.sidebar-logo img{
+    width:200px;
+    height:auto;
+}
 
         .sidebar-title{
             text-align:center;
@@ -105,7 +112,7 @@ def apply_global_styles():
     st.markdown("""
     <style>
     .main { background-color: #f8fafc; }
-    .block-container { padding-top: 1.5rem; max-width: 1400px; }
+    .block-container { padding-top: 0rem; max-width: 1400px; }
     [data-testid="stSidebar"] { background: linear-gradient(180deg, #0f172a, #111827); }
     [data-testid="stSidebar"] * { color: white; }
     .card {
@@ -132,26 +139,31 @@ def apply_global_styles():
     # ── Figma-aligned navbar / breadcrumb / flat WORKFLOW sidebar list ─────
     st.markdown("""
     <style>
-    /* Top section navbar — dark bar holding the 4 page_link "tabs" */
-    .cx-navbar {
-        background: #0B1220;
-        border-radius: 12px;
-        padding: 0.4rem 0.8rem 0;
-        margin-bottom: 1.1rem;
-        border: 1px solid #1E293B;
+
+    /* ---------- TOP NAVIGATION ONLY ---------- */
+
+    /* Horizontal block = top navbar */
+    [data-testid="stHorizontalBlock"] [data-testid="stPageLink-NavLink"]{
+        padding:0px 22px !important;
+        border-radius:14px !important;
     }
-    .cx-navbar [data-testid="stHorizontalBlock"] { gap: 0; }
-    .cx-navbar a {
-        color: #94A3B8 !important;
-        text-decoration: none !important;
-        font-size: 0.92rem;
-        font-weight: 500;
-        padding-bottom: 0.6rem;
-        display: inline-block;
-        border-bottom: 2px solid transparent;
+
+    [data-testid="stHorizontalBlock"] [data-testid="stPageLink-NavLink"] > div{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        gap:10px;
     }
-    .cx-navbar a:hover { color: #E2E8F0 !important; }
-    .cx-navbar [data-testid="stPageLink-NavLink"] { width: auto !important; }
+
+    [data-testid="stHorizontalBlock"] [data-testid="stPageLink-NavLink"] p{
+        font-size:20px !important;
+        font-weight:700 !important;
+        color:#374151 !important;
+    }
+
+    [data-testid="stHorizontalBlock"] [data-testid="stPageLink-NavLink"] span{
+        font-size:20px !important;
+    }
 
     /* Breadcrumb under navbar */
     .cx-breadcrumb {
@@ -167,17 +179,56 @@ def apply_global_styles():
         color: #7C8AA8; font-size: 0.72rem; font-weight: 700;
         letter-spacing: 0.08em; margin: 4px 0 10px 4px;
     }
-    .cx-nav-item {
-        border-radius: 10px; margin-bottom: 4px; overflow: hidden;
-    }
-    .cx-nav-item [data-testid="stPageLink-NavLink"] {
-        width: 100% !important; padding: 0.5rem 0.7rem !important;
-        border-radius: 10px !important;
-    }
-    .cx-nav-item a p { color: #CBD5E1 !important; font-weight: 500 !important; }
-    .cx-nav-item:hover { background: rgba(255,255,255,0.06); }
-    .cx-nav-active { background: #1f2b4d; border-left: 3px solid #5B8DEF; }
-    .cx-nav-active a p { color: #ffffff !important; font-weight: 700 !important; }
+    /* ===========================
+   SIDEBAR NAVIGATION
+   =========================== */
+
+.cx-nav-item{
+    border-radius:10px;
+    overflow:hidden;
+}
+
+.cx-nav-item [data-testid="stPageLink-NavLink"]{
+    width:100% !important;
+    padding:8px 10px !important;
+    min-height:40px !important;
+    border-radius:10px !important;
+}
+
+/* keep icon and text left aligned */
+.cx-nav-item [data-testid="stPageLink-NavLink"] > div{
+    display:flex;
+    align-items:center;
+    justify-content:flex-start !important;
+    gap:10px;
+}
+
+/* text */
+.cx-nav-item [data-testid="stPageLink-NavLink"] p{
+    font-size:15px !important;
+    font-weight:500 !important;
+    color:#FFFFFF !important;
+    margin:0 !important;
+}
+
+/* icon */
+.cx-nav-item [data-testid="stPageLink-NavLink"] span{
+    font-size:15px !important;
+    color:#FFFFFF !important;
+}
+
+.cx-nav-item:hover{
+    background:rgba(255,255,255,.06);
+}
+
+.cx-nav-active{
+    background:#1F2B4D;
+    border-left:3px solid #5B8DEF;
+}
+
+.cx-nav-active [data-testid="stPageLink-NavLink"] p{
+    font-weight:700 !important;
+}
 
     /* Sub-tab pills (Feasibility Assessment | Gain-Pain Analysis, etc.) */
     .cx-subtabs [data-testid="stPageLink-NavLink"] {

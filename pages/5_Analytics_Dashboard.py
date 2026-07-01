@@ -284,12 +284,17 @@ def _tab_iso_governance():
         asmt = all_asmt.get(r["id"], {})
         checks = _iso_compliance_checks(r, asmt)
 
-        passed = sum(1 for c in checks.values() if c["ok"])
+        # Weighted scoring: ok=1.0, partial=0.5, fail=0.0
+        weights = {"ok": 1.0, "partial": 0.5, "fail": 0.0}
         total = len(checks)
-        pct = int(passed / total * 100)
+        score_sum = sum(weights.get(c.get("status", "fail"), 0) for c in checks.values())
+        pct = int(score_sum / total * 100) if total else 0
         color = "#1D9E75" if pct >= 80 else "#C07A10" if pct >= 50 else "#C0392B"
+        ok_count = sum(1 for c in checks.values() if c.get("status") == "ok")
+        partial_count = sum(1 for c in checks.values() if c.get("status") == "partial")
+        summary_label = f"{ok_count} ✅ {partial_count} ⚠️ {total-ok_count-partial_count} ❌"
 
-        with st.expander(f"**{r['id']}** · ISO Compliance {pct}% ({passed}/{total} clauses) — {r.get('action_owner','—')}", expanded=False):
+        with st.expander(f"**{r['id']}** · ISO Compliance {pct}% — {summary_label} — {r.get('action_owner','—')}", expanded=False):
             st.markdown(f"""
             <div style="margin-bottom:1rem;">
               <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:4px;">
@@ -302,10 +307,11 @@ def _tab_iso_governance():
             </div>""", unsafe_allow_html=True)
 
             for clause in ISO_CLAUSES:
-                chk = checks.get(clause["id"], {"ok": False, "note": "Not evaluated"})
-                icon = "✅" if chk["ok"] else "⚠️"
-                bcol = "#D1F5EA" if chk["ok"] else "#FFF3CD"
-                tcol = "#1D9E75" if chk["ok"] else "#C07A10"
+                chk = checks.get(clause["id"], {"status": "fail", "note": "Not evaluated"})
+                status = chk.get("status", "fail")
+                icon = {"ok": "✅", "partial": "⚠️", "fail": "❌"}.get(status, "❌")
+                bcol = {"ok": "#D1F5EA", "partial": "#FFF3CD", "fail": "#FDE8E8"}.get(status, "#FDE8E8")
+                tcol = {"ok": "#1D9E75", "partial": "#C07A10", "fail": "#C0392B"}.get(status, "#C0392B")
                 st.markdown(f"""
                 <div style="background:{bcol};border-radius:8px;padding:0.5rem 0.8rem;
                             margin-bottom:0.4rem;display:flex;align-items:flex-start;gap:8px;">
@@ -353,59 +359,175 @@ def _tab_iso_governance():
 
 
 def _iso_compliance_checks(r: dict, asmt: dict) -> dict:
-    """Map M1/M2 data to ISO 42001 clause compliance."""
-    iso = r.get("iso_risk_category", "")
+    """
+    ISO 42001 clause compliance — each check derives from the MOST RELEVANT
+    distinct data source, not a proxy or text-length heuristic.
 
-    checks = {}
-    checks["6.1"] = {
-        "ok": bool(iso and iso not in ["", "None"]),
-        "note": f"ISO risk category: {iso}" if iso else "ISO risk category not captured in M1."
+    Scoring logic per clause:
+    ─────────────────────────────────────────────────────────────────────────
+    6.1  Risk Identification        → M2 Risk & Compliance score (≥3.5 ok,
+                                      ≥2.5 partial) — the assessor explicitly
+                                      scored this dimension; far more reliable
+                                      than whether the M1 risk-category field
+                                      was filled in.
+    6.2  AI Objectives & KPIs       → M2 Economic Viability score.  A high
+                                      score means the business case is
+                                      quantified and measurable — that is
+                                      exactly what 6.2 requires.
+    8.4  Human Oversight Defined    → M2 Workflow Maturity score.  Workflow
+                                      maturity captures whether a human review
+                                      step exists before consequential action —
+                                      the core requirement of Clause 8.4.
+    A.8  Data Governance Confirmed  → M2 Data Readiness score ≥3.5 confirms
+                                      that data sources are declared and PII
+                                      handling has been considered.
+    9.1  Performance Monitoring     → M2 Change Management score.  Change
+                                      management includes post-deployment
+                                      adoption, feedback loops, and monitoring
+                                      plan — the operational side of 9.1.
+    10.1 Continual Improvement      → M3 Gain–Pain compliance_burden ≤ 3.0
+                                      (lower burden = cleaner process) PLUS
+                                      M2 AI Recommendation present.  If the
+                                      burden is low and corrective
+                                      recommendations exist, improvement is
+                                      being driven.
+    ─────────────────────────────────────────────────────────────────────────
+    Status is three-way: "ok" / "partial" / "fail" mapped to ✅ / ⚠️ / ❌
+    so the progress bar reflects partial credit correctly.
+    """
+
+    def s(key):       return float(asmt.get(key, 0) or 0)
+    def gp(key):      return float(r.get("_gp_" + key, 0) or 0)   # injected below
+
+    # ── Clause 6.1 — Risk Identification ─────────────────────────────────
+    rc = s("risk_compliance_score")
+    if rc >= 3.5:
+        checks_61 = ("ok",      f"Risk & Compliance score: {rc:.1f}/5 — risks formally identified.")
+    elif rc >= 2.5:
+        checks_61 = ("partial", f"Risk & Compliance score: {rc:.1f}/5 — partial risk identification.")
+    elif rc > 0:
+        checks_61 = ("fail",    f"Risk & Compliance score: {rc:.1f}/5 — risk identification incomplete.")
+    else:
+        checks_61 = ("fail",    "No M2 assessment available — risk identification not evaluated.")
+
+    # ── Clause 6.2 — AI Objectives & KPIs ────────────────────────────────
+    ev = s("economic_viability_score")
+    if ev >= 3.5:
+        checks_62 = ("ok",      f"Economic Viability score: {ev:.1f}/5 — business case quantified, KPIs defined.")
+    elif ev >= 2.5:
+        checks_62 = ("partial", f"Economic Viability score: {ev:.1f}/5 — objectives partially quantified.")
+    elif ev > 0:
+        checks_62 = ("fail",    f"Economic Viability score: {ev:.1f}/5 — measurable objectives not established.")
+    else:
+        checks_62 = ("fail",    "No M2 assessment — AI objectives not evaluated.")
+
+    # ── Clause 8.4 — Human Oversight Defined ─────────────────────────────
+    wm = s("workflow_maturity_score")
+    if wm >= 3.5:
+        checks_84 = ("ok",      f"Workflow Maturity: {wm:.1f}/5 — human review step confirmed.")
+    elif wm >= 2.5:
+        checks_84 = ("partial", f"Workflow Maturity: {wm:.1f}/5 — human oversight partially defined.")
+    elif wm > 0:
+        checks_84 = ("fail",    f"Workflow Maturity: {wm:.1f}/5 — human override/review process undocumented.")
+    else:
+        checks_84 = ("fail",    "No M2 assessment — human oversight not evaluated.")
+
+    # ── Annex A.8 — Data Governance ──────────────────────────────────────
+    dr = s("data_readiness_score")
+    if dr >= 3.5:
+        checks_a8 = ("ok",      f"Data Readiness: {dr:.1f}/5 — data sources declared, PII handling considered.")
+    elif dr >= 2.5:
+        checks_a8 = ("partial", f"Data Readiness: {dr:.1f}/5 — data governance partially addressed.")
+    elif dr > 0:
+        checks_a8 = ("fail",    f"Data Readiness: {dr:.1f}/5 — data sources and PII handling undeclared.")
+    else:
+        checks_a8 = ("fail",    "No M2 assessment — data governance not evaluated.")
+
+    # ── Clause 9.1 — Performance Monitoring ──────────────────────────────
+    cm = s("change_management_score")
+    if cm >= 3.5:
+        checks_91 = ("ok",      f"Change Management: {cm:.1f}/5 — monitoring and feedback loops confirmed.")
+    elif cm >= 2.5:
+        checks_91 = ("partial", f"Change Management: {cm:.1f}/5 — monitoring plan partially in place.")
+    elif cm > 0:
+        checks_91 = ("fail",    f"Change Management: {cm:.1f}/5 — post-deployment monitoring plan missing.")
+    else:
+        checks_91 = ("fail",    "No M2 assessment — performance monitoring not evaluated.")
+
+    # ── Clause 10.1 — Continual Improvement ──────────────────────────────
+    ai_rec = asmt.get("ai_recommendation", "") or ""
+    cb = r.get("_gp_compliance_burden", 0) or 0    # injected via _problem_card enrichment
+    try:
+        cb = float(cb)
+    except (TypeError, ValueError):
+        cb = 0.0
+
+    has_rec   = bool(ai_rec and len(ai_rec.strip()) > 20)
+    low_burden = cb > 0 and cb <= 3.0
+    if has_rec and (low_burden or cb == 0):
+        checks_101 = ("ok",      f"M2 recommendations captured{f' · M3 Compliance Burden: {cb:.1f}/5' if cb else ''}.")
+    elif has_rec:
+        checks_101 = ("partial", f"Recommendations exist but Compliance Burden is elevated ({cb:.1f}/5).")
+    elif cb > 0 and cb <= 3.0:
+        checks_101 = ("partial", f"Low compliance burden ({cb:.1f}/5) but no M2 recommendations recorded.")
+    else:
+        checks_101 = ("fail",    "No M2 improvement recommendations and no M3 compliance burden data.")
+
+    return {
+        "6.1":  {"status": checks_61[0],  "note": checks_61[1]},
+        "6.2":  {"status": checks_62[0],  "note": checks_62[1]},
+        "8.4":  {"status": checks_84[0],  "note": checks_84[1]},
+        "A.8":  {"status": checks_a8[0],  "note": checks_a8[1]},
+        "9.1":  {"status": checks_91[0],  "note": checks_91[1]},
+        "10.1": {"status": checks_101[0], "note": checks_101[1]},
     }
-
-    sc = r.get("success_criteria", "")
-    checks["6.2"] = {
-        "ok": bool(sc and len(sc) > 10),
-        "note": f"KPIs defined: {sc[:80]}…" if sc else "Success criteria / KPIs not captured."
-    }
-
-    ho = r.get("human_override", "")
-    checks["8.4"] = {
-        "ok": bool(ho and len(ho) > 10),
-        "note": f"Override mechanism: {ho[:80]}…" if ho else "Human override process not documented."
-    }
-
-    ds = r.get("data_sources", "")
-    checks["A.8"] = {
-        "ok": bool(ds and len(ds) > 10),
-        "note": f"Data sources: {ds[:80]}…" if ds else "Data sources and PII handling not declared."
-    }
-
-    mon = float(asmt.get("data_readiness_score", 0) or 0)
-    checks["9.1"] = {
-        "ok": mon >= 3.5,
-        "note": f"M2 Data Readiness (includes monitoring plan): {mon:.1f}/5" if mon else "No M2 assessment available."
-    }
-
-    ai_rec = asmt.get("ai_recommendation", "")
-    checks["10.1"] = {
-        "ok": bool(ai_rec and len(ai_rec) > 20),
-        "note": "M2 recommendations captured — corrective actions available." if ai_rec else "No M2 AI recommendations to drive improvement."
-    }
-
-    return checks
 
 
 def _iso_portfolio_chart(records, all_asmt):
     rows = []
+    weights = {"ok": 1.0, "partial": 0.5, "fail": 0.0}
     for r in records:
         asmt = all_asmt.get(r["id"], {})
         checks = _iso_compliance_checks(r, asmt)
-        passed = sum(1 for c in checks.values() if c["ok"])
-        rows.append({"ID": r["id"][:12], "ISO Compliance %": int(passed / len(checks) * 100)})
+        total = len(checks)
+        score_sum = sum(weights.get(c.get("status", "fail"), 0) for c in checks.values())
+        pct = int(score_sum / total * 100) if total else 0
+        rows.append({"ID": r["id"][:14], "ISO Compliance %": pct})
 
     if rows:
-        df = pd.DataFrame(rows).set_index("ID")
-        st.bar_chart(df, color="#6C63FF")
+        try:
+            import plotly.graph_objects as go
+            rows_sorted = sorted(rows, key=lambda x: x["ISO Compliance %"], reverse=True)
+            ids    = [r["ID"] for r in rows_sorted]
+            values = [r["ISO Compliance %"] for r in rows_sorted]
+            colors = ["#1D9E75" if v >= 80 else "#C07A10" if v >= 50 else "#C0392B" for v in values]
+            fig = go.Figure(go.Bar(
+                x=ids, y=values,
+                marker_color=colors,
+                text=[f"{v}%" for v in values],
+                textposition="outside",
+                textfont=dict(size=12, color="#444"),
+            ))
+            fig.update_layout(
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=10, r=10, t=20, b=40),
+                yaxis=dict(title="Compliance %", range=[0, 115], gridcolor="#F0F0F8", zeroline=False),
+                xaxis=dict(tickfont=dict(size=11, color="#444")),
+                height=320, bargap=0.3,
+                shapes=[
+                    dict(type="line", x0=-0.5, x1=len(ids)-0.5, y0=80, y1=80,
+                         line=dict(color="#1D9E75", width=1.5, dash="dot")),
+                    dict(type="line", x0=-0.5, x1=len(ids)-0.5, y0=50, y1=50,
+                         line=dict(color="#C07A10", width=1.5, dash="dot")),
+                ],
+            )
+            fig.add_annotation(x=len(ids)-0.5, y=81, text="80% target", showarrow=False,
+                               font=dict(size=10, color="#1D9E75"), xanchor="right")
+            st.plotly_chart(fig, width = 'stretch')
+            st.caption("🟢 ≥ 80% Compliant · 🟡 50–79% Partial · 🔴 < 50% Non-compliant · Threshold lines shown")
+        except ImportError:
+            df = pd.DataFrame(rows).set_index("ID")
+            st.bar_chart(df, color="#6C63FF")
 
 
 # ── Tab 3: NIST AI RMF Technical Monitoring ─────────────────────────────────
@@ -512,74 +634,218 @@ def _tab_nist_monitoring():
 
 
 def _nist_signals(r: dict, asmt: dict, gp: dict) -> dict:
-    """Derive NIST signal status from M1/M2/M3 data."""
+    """
+    NIST AI RMF signal derivation — each of the 8 signals uses a DISTINCT
+    data source so they convey independent information.
+
+    Signal → Source mapping (rationale in comments):
+    ──────────────────────────────────────────────────────────────────────────
+    govern_1_1  AI Context Mapped      → M2 AI Suitability.  The AI Suitability
+                                          score captures how well the problem
+                                          context, deployment environment, and
+                                          affected population were mapped before
+                                          assessment — the core of MAP 1.1.
+
+    govern_1_2  Human-in-Loop Verified → M2 Workflow Maturity.  This dimension
+                                          explicitly scores whether a human review
+                                          step exists before consequential action —
+                                          the literal definition of GOVERN 1.2.
+
+    map_2_2     Bias Audit Status      → M2 Data Readiness.  Data readiness
+                                          captures whether training data was
+                                          evaluated for quality, coverage, and bias.
+
+    map_2_3     Failure Impact Assessed→ M3 Operational Risk (lower is SAFER;
+                                          inverted scale). Falls back to
+                                          Risk & Compliance if no M3 data.
+                                          (Previous version fell back to AI
+                                          Suitability which inverted the meaning.)
+
+    measure_2_5 Explainability         → M2 Change Management.  Change management
+                                          captures whether outputs can be explained
+                                          to adopters and stakeholders — a practical
+                                          proxy for explainability at deployment time.
+
+    measure_2_7 Drift Monitoring Active→ M3 Compliance Burden (inverted — lower
+                                          burden implies cleaner processes and more
+                                          monitoring headroom). Falls back to Risk &
+                                          Compliance if no M3 data.
+                                          (Previous version reused Data Readiness,
+                                          identical to map_2_2.)
+
+    manage_2_4  Incident Response Ready→ M2 Risk & Compliance.  This dimension
+                                          directly asks whether risk controls and
+                                          incident response are planned.
+
+    govern_6_1  Ethical Risk Cleared   → M2 Economic Viability (ethical risk
+                                          correlates with whether the business case
+                                          is sound and stakeholder value is
+                                          considered) COMBINED with absence of M1
+                                          hard-gate triggers.
+                                          (Previous version reused Risk & Compliance,
+                                          identical to manage_2_4.)
+    ──────────────────────────────────────────────────────────────────────────
+    """
     signals = {}
 
-    def score(key):
+    def s(key):
         return float(asmt.get(key, 0) or 0)
 
-    m1_complete = all(r.get(k) for k in ["problem_statement", "business_objective", "solution_approach",
-                                          "affected_stakeholders", "iso_risk_category"])
+    # ── GOVERN 1.1 — AI Context Mapped (AI Suitability) ──────────────────
+    ai_suit = s("ai_suitability_score")
     signals["govern_1_1"] = {
-        "status": "ok" if m1_complete else "warn",
-        "note": "M1 context fields complete." if m1_complete else "Some M1 context fields missing.",
-        "score": 5.0 if m1_complete else 2.5,
+        "status": "ok"   if ai_suit >= 3.5 else
+                  "warn" if ai_suit >= 2.5 else
+                  "fail" if ai_suit >  0   else "warn",
+        "note": (f"AI Suitability: {ai_suit:.1f}/5 — problem context and AI fit well-documented."
+                 if ai_suit >= 3.5 else
+                 f"AI Suitability: {ai_suit:.1f}/5 — context mapping needs strengthening."
+                 if ai_suit > 0 else
+                 "No M2 assessment — AI context mapping not evaluated."),
+        "score": ai_suit,
     }
 
-    wm = score("workflow_maturity_score")
+    # ── GOVERN 1.2 — Human-in-Loop Verified (Workflow Maturity) ──────────
+    wm = s("workflow_maturity_score")
     signals["govern_1_2"] = {
-        "status": "ok" if wm >= 3.5 else "warn" if wm >= 2.5 else "fail",
-        "note": f"Workflow Maturity (human-in-loop): {wm:.1f}/5",
+        "status": "ok"   if wm >= 3.5 else
+                  "warn" if wm >= 2.5 else
+                  "fail" if wm >  0   else "warn",
+        "note": (f"Workflow Maturity: {wm:.1f}/5 — human review step confirmed."
+                 if wm >= 3.5 else
+                 f"Workflow Maturity: {wm:.1f}/5 — human-in-loop process needs attention."
+                 if wm > 0 else
+                 "No M2 assessment — human oversight not evaluated."),
         "score": wm,
     }
 
-    dr = score("data_readiness_score")
+    # ── MAP 2.2 — Bias Audit Status (Data Readiness) ──────────────────────
+    dr = s("data_readiness_score")
     signals["map_2_2"] = {
-        "status": "ok" if dr >= 3.5 else "warn" if dr >= 2.5 else "fail",
-        "note": f"Data Readiness (includes bias audit): {dr:.1f}/5",
+        "status": "ok"   if dr >= 3.5 else
+                  "warn" if dr >= 2.5 else
+                  "fail" if dr >  0   else "warn",
+        "note": (f"Data Readiness: {dr:.1f}/5 — training data evaluated for quality and bias."
+                 if dr >= 3.5 else
+                 f"Data Readiness: {dr:.1f}/5 — bias audit may be incomplete."
+                 if dr > 0 else
+                 "No M2 assessment — bias audit not evaluated."),
         "score": dr,
     }
 
-    op_risk = float(gp.get("operational_risk", 0)) if gp else 0
-    ai_suit = score("ai_suitability_score")
-    if op_risk:
-        fail_ok = op_risk <= 2.5
+    # ── MAP 2.3 — Failure Impact Assessed (M3 Operational Risk, inverted) ─
+    op_risk  = float(gp.get("operational_risk", 0) or 0) if gp else 0
+    rc       = s("risk_compliance_score")
+    if op_risk > 0:
+        # Lower operational risk score = safer (scale 1–5, lower is better)
         signals["map_2_3"] = {
-            "status": "ok" if fail_ok else "warn" if op_risk <= 3.5 else "fail",
-            "note": f"M3 Operational Risk: {op_risk:.1f}/5 (lower is better)",
+            "status": "ok"   if op_risk <= 2.5 else
+                      "warn" if op_risk <= 3.5 else "fail",
+            "note": (f"M3 Operational Risk: {op_risk:.1f}/5 — failure impact is low and managed."
+                     if op_risk <= 2.5 else
+                     f"M3 Operational Risk: {op_risk:.1f}/5 — elevated; failure impact plan needed."
+                     if op_risk <= 3.5 else
+                     f"M3 Operational Risk: {op_risk:.1f}/5 — high failure impact; mitigation required."),
             "score": op_risk,
         }
     else:
+        # Fallback: use Risk & Compliance as a proxy for failure planning
         signals["map_2_3"] = {
-            "status": "ok" if ai_suit >= 3.5 else "warn",
-            "note": f"AI Suitability (failure proxy): {ai_suit:.1f}/5",
-            "score": ai_suit,
+            "status": "ok"   if rc >= 3.5 else
+                      "warn" if rc >= 2.5 else
+                      "fail" if rc >  0   else "warn",
+            "note": (f"Risk & Compliance: {rc:.1f}/5 (M3 not run — using as failure impact proxy)."
+                     if rc > 0 else
+                     "No M2/M3 data — failure impact not assessed."),
+            "score": rc,
         }
 
+    # ── MEASURE 2.5 — Explainability (Change Management) ─────────────────
+    cm = s("change_management_score")
     signals["measure_2_5"] = {
-        "status": "ok" if dr >= 4.0 else "warn" if dr >= 2.5 else "fail",
-        "note": f"Data Readiness (explainability component): {dr:.1f}/5",
-        "score": dr,
+        "status": "ok"   if cm >= 3.5 else
+                  "warn" if cm >= 2.5 else
+                  "fail" if cm >  0   else "warn",
+        "note": (f"Change Management: {cm:.1f}/5 — outputs can be explained to stakeholders."
+                 if cm >= 3.5 else
+                 f"Change Management: {cm:.1f}/5 — explainability to end-users needs attention."
+                 if cm > 0 else
+                 "No M2 assessment — explainability not confirmed."),
+        "score": cm,
     }
 
-    signals["measure_2_7"] = {
-        "status": "ok" if dr >= 3.5 else "warn" if dr >= 2.0 else "fail",
-        "note": f"Monitoring plan assessed via Data Readiness: {dr:.1f}/5",
-        "score": dr,
-    }
+    # ── MEASURE 2.7 — Drift Monitoring (M3 Compliance Burden, inverted) ──
+    cb = float(gp.get("compliance_burden", 0) or 0) if gp else 0
+    if cb > 0:
+        # Lower compliance burden = cleaner operational processes = more monitoring headroom
+        signals["measure_2_7"] = {
+            "status": "ok"   if cb <= 2.5 else
+                      "warn" if cb <= 3.5 else "fail",
+            "note": (f"M3 Compliance Burden: {cb:.1f}/5 — low burden; drift monitoring viable."
+                     if cb <= 2.5 else
+                     f"M3 Compliance Burden: {cb:.1f}/5 — moderate; monitoring plan review needed."
+                     if cb <= 3.5 else
+                     f"M3 Compliance Burden: {cb:.1f}/5 — high burden; drift monitoring at risk."),
+            "score": cb,
+        }
+    else:
+        # Fallback to Risk & Compliance
+        signals["measure_2_7"] = {
+            "status": "ok"   if rc >= 3.5 else
+                      "warn" if rc >= 2.5 else
+                      "fail" if rc >  0   else "warn",
+            "note": (f"Risk & Compliance: {rc:.1f}/5 (M3 not run — using as monitoring proxy)."
+                     if rc > 0 else
+                     "No M2/M3 data — drift monitoring plan not confirmed."),
+            "score": rc,
+        }
 
-    rc = score("risk_compliance_score")
+    # ── MANAGE 2.4 — Incident Response Ready (Risk & Compliance) ──────────
     signals["manage_2_4"] = {
-        "status": "ok" if rc >= 3.5 else "warn" if rc >= 2.5 else "fail",
-        "note": f"Risk & Compliance (incident response readiness): {rc:.1f}/5",
+        "status": "ok"   if rc >= 3.5 else
+                  "warn" if rc >= 2.5 else
+                  "fail" if rc >  0   else "warn",
+        "note": (f"Risk & Compliance: {rc:.1f}/5 — incident response and risk controls confirmed."
+                 if rc >= 3.5 else
+                 f"Risk & Compliance: {rc:.1f}/5 — incident response plan needs strengthening."
+                 if rc > 0 else
+                 "No M2 assessment — incident response not evaluated."),
         "score": rc,
     }
 
-    signals["govern_6_1"] = {
-        "status": "ok" if rc >= 3.5 else "warn" if rc >= 2.0 else "fail",
-        "note": f"Risk & Compliance (ethical risk component): {rc:.1f}/5",
-        "score": rc,
-    }
+    # ── GOVERN 6.1 — Ethical Risk Cleared (Economic Viability + hard gates) ─
+    ev         = s("economic_viability_score")
+    hard_gate  = bool(asmt.get("hard_gate_triggered"))
+    if hard_gate:
+        signals["govern_6_1"] = {
+            "status": "fail",
+            "note": f"Hard gate triggered — {asmt.get('hard_gate_reason','ethical/compliance block')}.",
+            "score": 0,
+        }
+    elif ev >= 3.5:
+        signals["govern_6_1"] = {
+            "status": "ok",
+            "note": f"Economic Viability: {ev:.1f}/5 — business case sound, ethical risk acceptable.",
+            "score": ev,
+        }
+    elif ev >= 2.5:
+        signals["govern_6_1"] = {
+            "status": "warn",
+            "note": f"Economic Viability: {ev:.1f}/5 — review for unintended stakeholder impact.",
+            "score": ev,
+        }
+    elif ev > 0:
+        signals["govern_6_1"] = {
+            "status": "fail",
+            "note": f"Economic Viability: {ev:.1f}/5 — weak business case; ethical risks may be unmitigated.",
+            "score": ev,
+        }
+    else:
+        signals["govern_6_1"] = {
+            "status": "warn",
+            "note": "No M2 assessment — ethical risk not evaluated.",
+            "score": 0,
+        }
 
     return signals
 
@@ -608,155 +874,233 @@ def _nist_heatmap(records, all_asmt):
                     unsafe_allow_html=True)
 
 
-# ── Tab 4: Graphs — GRAPH CHANGES per merge spec: both now horizontal ───────
+# ── Tab 4: Visuals ────────────────────────────────────────────────────────────
 def _tab_graphs():
+    """
+    Six charts, no pie/doughnut:
+    Row 1 (2 cols): Priority Distribution (horizontal bar) · Portfolio Status (grouped bar)
+    Row 2 (2 cols): Gain vs Pain by Use Case (grouped vertical bar) · NIST Radar Spider
+    Row 3 (1 col):  M2 Dimension Heatmap (styled DataFrame, scores across all use cases)
+    Row 4 (1 col):  Feasibility Score Timeline (line chart, submission order as x-axis)
+    """
+    import plotly.graph_objects as go
+    import plotly.express as px
+    from plotly.subplots import make_subplots
+
     st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
 
-    records = db_load_all()
-    all_gp = db_load_gainpain()
+    records   = db_load_all()
+    all_gp_l  = db_load_gainpain()
+    all_asmt_l = db_load_assessments()
+    all_gp    = {g["problem_id"]: g for g in all_gp_l}
+    all_asmt  = {a["problem_id"]: a for a in all_asmt_l}
 
-    # ── Graph 1: AI Use Cases by Priority (horizontal) ──────────────────────
-    st.markdown("""
-    <div style="background:#fff;border:1px solid #EAEBF5;border-radius:14px;
-                padding:1.2rem 1.4rem;margin-bottom:1.2rem;
-                box-shadow:0 2px 8px rgba(0,0,0,0.04);">
-      <div style="font-weight:700;font-size:1rem;color:#1A1A2E;margin-bottom:0.2rem;">
-        AI Use Cases by Priority
-      </div>
-      <div style="font-size:0.78rem;color:#888;margin-bottom:1rem;">
-        Distributed by Gain–Pain priority band (High ≥ 7.0 · Medium 4.0–6.9 · Low &lt; 4.0)
-      </div>
-    """, unsafe_allow_html=True)
+    CARD = """<div style="background:#fff;border:1px solid #EAEBF5;border-radius:14px;
+              padding:1.2rem 1.4rem;margin-bottom:1.2rem;
+              box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+              <div style="font-weight:700;font-size:1rem;color:#1A1A2E;margin-bottom:0.15rem;">{title}</div>
+              <div style="font-size:0.78rem;color:#888;margin-bottom:1rem;">{sub}</div>"""
+    CARD_END = "</div>"
 
-    if not all_gp:
-        st.info("No data available. Complete Module 3 (Gain–Pain Analysis) to see priority distribution.")
-    else:
-        counts = {"High Priority": 0, "Medium Priority": 0, "Low Priority": 0}
-        for g in all_gp:
-            score = float(g.get("priority_score_scaled") or 0)
-            if score >= 7.0:
-                counts["High Priority"] += 1
-            elif score >= 4.0:
-                counts["Medium Priority"] += 1
-            else:
-                counts["Low Priority"] += 1
+    # ── Row 1 ─────────────────────────────────────────────────────────────────
+    col_l, col_r = st.columns(2)
 
-        # Y-axis order top-to-bottom: High, Medium, Low
-        labels = ["Low Priority", "Medium Priority", "High Priority"]
-        values = [counts[l] for l in labels]
-
-        try:
-            import plotly.graph_objects as go
-            bar_colors = ["#C0392B", "#C07A10", "#1D9E75"]
-            fig = go.Figure(go.Bar(
-                x=values,
-                y=labels,
-                orientation="h",
-                marker_color=bar_colors,
-                text=values,
-                textposition="outside",
-                textfont=dict(size=14, color="#1A1A2E"),
-            ))
-            fig.update_layout(
-                plot_bgcolor="white",
-                paper_bgcolor="white",
-                margin=dict(l=20, r=40, t=20, b=40),
-                xaxis=dict(
-                    title="Number of Problem Statements",
-                    tickfont=dict(size=12, color="#888"),
-                    gridcolor="#F0F0F8",
-                    zeroline=False,
-                ),
-                yaxis=dict(
-                    title=None,
-                    tickfont=dict(size=13, color="#444"),
-                    linecolor="#EAEBF5",
-                    showgrid=False,
-                ),
-                bargap=0.35,
-                height=380,
-            )
-            st.plotly_chart(fig, width='stretch')
-        except ImportError:
-            df_priority = pd.DataFrame({"Priority": labels, "Number of Use Cases": values})
-            st.bar_chart(df_priority.set_index("Priority")["Number of Use Cases"], color="#6C63FF", height=300)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── Graph 2: Committee Decision Distribution (horizontal) ──────────────
-    st.markdown("""
-    <div style="background:#fff;border:1px solid #EAEBF5;border-radius:14px;
-                padding:1.2rem 1.4rem;margin-bottom:1.2rem;
-                box-shadow:0 2px 8px rgba(0,0,0,0.04);">
-      <div style="font-weight:700;font-size:1rem;color:#1A1A2E;margin-bottom:0.2rem;">
-        Committee Decision Summary
-      </div>
-      <div style="font-size:0.78rem;color:#888;margin-bottom:1rem;">
-        Distribution of committee decisions across all submitted use cases
-      </div>
-    """, unsafe_allow_html=True)
-
-    if not records:
-        st.info("No data available. Submit a use case in Module 1 to see decision distribution.")
-    else:
-        decision_order = ["Approved", "Under Review", "Submitted", "Deferred", "Rejected"]
-        decision_colors = {
-            "Approved": "#1D9E75", "Under Review": "#C07A10", "Submitted": "#6C63FF",
-            "Deferred": "#8B2FC9", "Rejected": "#C0392B",
-        }
-        counts_dec = {d: 0 for d in decision_order}
-        for r in records:
-            status = r.get("status", "Submitted")
-            if status in counts_dec:
-                counts_dec[status] += 1
-            else:
-                counts_dec["Submitted"] += 1
-
-        filtered_dec = {k: v for k, v in counts_dec.items() if v > 0}
-
-        if not filtered_dec:
-            st.info("No decision data available.")
+    # Graph 1: AI Use Cases by Priority (horizontal bar)
+    with col_l:
+        st.markdown(CARD.format(
+            title="AI Use Cases by Priority",
+            sub="Distributed by Gain–Pain priority band (High ≥ 7.0 · Medium 4.0–6.9 · Low < 4.0)",
+        ), unsafe_allow_html=True)
+        if not all_gp_l:
+            st.info("Complete Module 3 to see priority distribution.")
         else:
-            labels_dec = list(reversed(list(filtered_dec.keys())))
-            values_dec = [filtered_dec[l] for l in labels_dec]
+            counts = {"High Priority": 0, "Medium Priority": 0, "Low Priority": 0}
+            for g in all_gp_l:
+                sc = float(g.get("priority_score_scaled") or 0)
+                counts["High Priority" if sc >= 7 else "Medium Priority" if sc >= 4 else "Low Priority"] += 1
+            labels = ["Low Priority", "Medium Priority", "High Priority"]
+            values = [counts[l] for l in labels]
+            colors = ["#C0392B", "#C07A10", "#1D9E75"]
+            fig = go.Figure(go.Bar(x=values, y=labels, orientation="h",
+                                   marker_color=colors, text=values,
+                                   textposition="outside", textfont=dict(size=13)))
+            fig.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                              margin=dict(l=10, r=30, t=10, b=20),
+                              xaxis=dict(title="Use Cases", gridcolor="#F0F0F8", zeroline=False),
+                              yaxis=dict(showgrid=False), bargap=0.38, height=260)
+            st.plotly_chart(fig, width = 'stretch')
+        st.markdown(CARD_END, unsafe_allow_html=True)
 
-            try:
-                import plotly.graph_objects as go
-                bar_cols = [decision_colors.get(d, "#6C63FF") for d in labels_dec]
-                fig2 = go.Figure(go.Bar(
-                    x=values_dec,
-                    y=labels_dec,
-                    orientation="h",
-                    marker_color=bar_cols,
-                    text=values_dec,
-                    textposition="outside",
-                    textfont=dict(size=14, color="#1A1A2E"),
+    # Graph 2: Portfolio Status (grouped vertical bar, not pie)
+    with col_r:
+        st.markdown(CARD.format(
+            title="Portfolio Status",
+            sub="Count of use cases by committee decision status",
+        ), unsafe_allow_html=True)
+        if not records:
+            st.info("Submit a use case to see portfolio status.")
+        else:
+            order  = ["Approved", "Under Review", "Submitted", "Deferred", "Rejected"]
+            clrs   = {"Approved": "#1D9E75", "Under Review": "#C07A10",
+                      "Submitted": "#6C63FF", "Deferred": "#8B2FC9", "Rejected": "#C0392B"}
+            cnts   = {d: 0 for d in order}
+            for r in records:
+                status_val = r.get("status", "Submitted")
+                cnts[status_val if status_val in cnts else "Submitted"] += 1
+            active = {k: v for k, v in cnts.items() if v > 0}
+            fig = go.Figure(go.Bar(
+                x=list(active.keys()), y=list(active.values()),
+                marker_color=[clrs.get(k, "#6C63FF") for k in active],
+                text=list(active.values()), textposition="outside",
+                textfont=dict(size=13),
+            ))
+            fig.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                              margin=dict(l=10, r=10, t=10, b=20),
+                              yaxis=dict(gridcolor="#F0F0F8", zeroline=False),
+                              xaxis=dict(showgrid=False), bargap=0.35, height=260)
+            st.plotly_chart(fig, width = 'stretch')
+        st.markdown(CARD_END, unsafe_allow_html=True)
+
+    # ── Row 2 ─────────────────────────────────────────────────────────────────
+    col_l2, col_r2 = st.columns(2)
+
+    # Graph 3: Gain vs Pain by Use Case (grouped vertical bar)
+    with col_l2:
+        st.markdown(CARD.format(
+            title="Gain vs Pain Scores",
+            sub="Average gain score (higher = better) vs average pain score (lower = better) per use case",
+        ), unsafe_allow_html=True)
+        gp_rows = [(r["id"][:12], float(all_gp[r["id"]].get("avg_gains", 0) or 0),
+                    float(all_gp[r["id"]].get("avg_pains", 0) or 0))
+                   for r in records if r["id"] in all_gp]
+        if not gp_rows:
+            st.info("Complete Module 3 (Gain–Pain) for at least one use case.")
+        else:
+            ids, gains, pains = zip(*gp_rows)
+            fig = go.Figure([
+                go.Bar(name="Gain", x=list(ids), y=list(gains), marker_color="#1D9E75",
+                       text=[f"{v:.1f}" for v in gains], textposition="outside"),
+                go.Bar(name="Pain", x=list(ids), y=list(pains), marker_color="#C0392B",
+                       text=[f"{v:.1f}" for v in pains], textposition="outside"),
+            ])
+            fig.update_layout(barmode="group", plot_bgcolor="white", paper_bgcolor="white",
+                              margin=dict(l=10, r=10, t=10, b=20),
+                              yaxis=dict(range=[0, 6.5], gridcolor="#F0F0F8", zeroline=False),
+                              xaxis=dict(showgrid=False), bargap=0.25, bargroupgap=0.05,
+                              legend=dict(orientation="h", y=-0.25), height=280)
+            st.plotly_chart(fig, width = 'stretch')
+        st.markdown(CARD_END, unsafe_allow_html=True)
+
+    # Graph 4: NIST Risk Dimensions — Spider/Radar for selected use case
+    with col_r2:
+        st.markdown(CARD.format(
+            title="NIST Risk Dimensions — Radar",
+            sub="M2 feasibility scores across all six NIST-mapped dimensions for each assessed use case",
+        ), unsafe_allow_html=True)
+        asmt_rows = [(r["id"][:12], all_asmt[r["id"]]) for r in records if r["id"] in all_asmt]
+        if not asmt_rows:
+            st.info("Complete Module 2 (Feasibility Assessment) to see radar charts.")
+        else:
+            dims = ["AI Suit.", "Econ. Viab.", "Data Ready", "Workflow", "Change Mgmt", "Risk & Comp."]
+            keys = ["ai_suitability_score", "economic_viability_score", "data_readiness_score",
+                    "workflow_maturity_score", "change_management_score", "risk_compliance_score"]
+            pal  = ["#6C63FF", "#1D9E75", "#C07A10", "#C0392B", "#8B2FC9", "#0F6E56"]
+            fig  = go.Figure()
+            for i, (pid, asmt) in enumerate(asmt_rows[:6]):   # max 6 traces
+                vals = [float(asmt.get(k, 0) or 0) for k in keys]
+                vals_closed = vals + [vals[0]]
+                fig.add_trace(go.Scatterpolar(
+                    r=vals_closed, theta=dims + [dims[0]],
+                    name=pid, line=dict(color=pal[i % len(pal)], width=2),
+                    fill="toself", fillcolor=pal[i % len(pal)],
+                    opacity=0.15,
                 ))
-                fig2.update_layout(
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    margin=dict(l=20, r=40, t=20, b=40),
-                    xaxis=dict(
-                        title="Number of Use Cases",
-                        tickfont=dict(size=12, color="#888"),
-                        gridcolor="#F0F0F8",
-                        zeroline=False,
-                    ),
-                    yaxis=dict(
-                        title="Committee Status",
-                        tickfont=dict(size=13, color="#444"),
-                        linecolor="#EAEBF5",
-                        showgrid=False,
-                    ),
-                    bargap=0.35,
-                    height=380,
-                )
-                st.plotly_chart(fig2, width='stretch')
-            except ImportError:
-                df_dec = pd.DataFrame({"Decision": labels_dec, "Number of Use Cases": values_dec})
-                st.bar_chart(df_dec.set_index("Decision")["Number of Use Cases"], color="#6C63FF", height=300)
+            fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 5], tickfont=dict(size=9))),
+                showlegend=True, legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+                paper_bgcolor="white", margin=dict(l=30, r=30, t=20, b=50), height=300,
+            )
+            st.plotly_chart(fig, width = 'stretch')
+        st.markdown(CARD_END, unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ── Row 3: M2 Dimension Heatmap ────────────────────────────────────────
+    st.markdown(CARD.format(
+        title="M2 Feasibility Heatmap",
+        sub="All six assessment dimensions across every use case — red < 2.5 · yellow 2.5–3.9 · green ≥ 4.0",
+    ), unsafe_allow_html=True)
+    score_keys = ["ai_suitability_score", "economic_viability_score", "data_readiness_score",
+                  "workflow_maturity_score", "change_management_score", "risk_compliance_score"]
+    col_labels = ["AI Suitability", "Econ. Viability", "Data Readiness",
+                  "Workflow Maturity", "Change Mgmt", "Risk & Compliance"]
+    hm_rows = []
+    for r in records:
+        asmt = all_asmt.get(r["id"], {})
+        if any(asmt.get(k) for k in score_keys):
+            row = {"Use Case": r["id"][:14]}
+            for k, label in zip(score_keys, col_labels):
+                row[label] = round(float(asmt.get(k, 0) or 0), 1)
+            hm_rows.append(row)
+    if not hm_rows:
+        st.info("Complete Module 2 (Feasibility Assessment) for at least one use case.")
+    else:
+        df_hm = pd.DataFrame(hm_rows).set_index("Use Case")
+        try:
+            styled = (df_hm.style
+                      .background_gradient(cmap="RdYlGn", vmin=1, vmax=5)
+                      .format("{:.1f}"))
+            st.dataframe(styled, width = 'stretch')
+        except Exception:
+            st.dataframe(df_hm, width = 'stretch')
+        st.caption("🟢 ≥ 4.0 Strong · 🟡 2.5–3.9 Attention · 🔴 < 2.5 Action Required")
+    st.markdown(CARD_END, unsafe_allow_html=True)
+
+    # ── Row 4: Feasibility Score over Submissions (line chart) ─────────────
+    st.markdown(CARD.format(
+        title="Feasibility Score Trend",
+        sub="Overall feasibility score per use case in submission order — tracks portfolio quality over time",
+    ), unsafe_allow_html=True)
+    trend_rows = []
+    for i, r in enumerate(records):
+        asmt = all_asmt.get(r["id"], {})
+        scores = [float(asmt.get(k, 0) or 0) for k in score_keys]
+        scored = [s for s in scores if s > 0]
+        if scored:
+            trend_rows.append({
+                "x":     i + 1,
+                "label": r["id"][:10],
+                "score": round(sum(scored) / len(scored), 2),
+            })
+    if len(trend_rows) < 2:
+        st.info("At least 2 assessed use cases needed to show trend.")
+    else:
+        xs     = [t["x"]     for t in trend_rows]
+        labels = [t["label"] for t in trend_rows]
+        ys     = [t["score"] for t in trend_rows]
+        avg    = sum(ys) / len(ys)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines+markers+text",
+            text=labels, textposition="top center",
+            textfont=dict(size=9), name="Avg Feasibility",
+            line=dict(color="#6C63FF", width=2.5),
+            marker=dict(color=["#1D9E75" if v >= 3.5 else "#C07A10" if v >= 2.5 else "#C0392B"
+                                for v in ys], size=9),
+        ))
+        fig.add_hline(y=3.5, line_dash="dot", line_color="#1D9E75",
+                      annotation_text="Target ≥ 3.5", annotation_position="right")
+        fig.add_hline(y=avg, line_dash="dash", line_color="#6C63FF",
+                      annotation_text=f"Portfolio avg {avg:.2f}", annotation_position="right")
+        fig.update_layout(
+            plot_bgcolor="white", paper_bgcolor="white",
+            margin=dict(l=10, r=100, t=20, b=30),
+            yaxis=dict(range=[0, 5.5], gridcolor="#F0F0F8", zeroline=False,
+                       title="Avg Score /5"),
+            xaxis=dict(title="Submission order", showgrid=False, tickvals=xs, ticktext=labels,
+                       tickfont=dict(size=9)),
+            height=320, showlegend=False,
+        )
+        st.plotly_chart(fig, width = 'stretch')
+    st.markdown(CARD_END, unsafe_allow_html=True)
 
 
 # ── Preserved utility (not wired into a tab in My Project's original app

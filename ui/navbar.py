@@ -40,28 +40,21 @@ SECTIONS = [
 
 
 def render_navbar(active: str = "landing"):
-    """Render the dark four-tab section navbar at the top of the page."""
     active_section = SECTION_OF.get(active, "problem_selection")
 
+    st.markdown('<div class="cx-navbar">', unsafe_allow_html=True)
+
     cols = st.columns(len(SECTIONS))
+
     for i, (code, label, target) in enumerate(SECTIONS):
         with cols[i]:
-            st.page_link(target, label=label)
-    st.markdown('</div>', unsafe_allow_html=True)
+            css = "cx-top-active" if code == active_section else "cx-top-item"
 
-    # Highlight the active tab — Streamlit doesn't expose a class hook per
-    # page_link, so the active one is marked via nth-child position, which
-    # is stable because SECTIONS above is a fixed, ordered list.
-    active_index = [s[0] for s in SECTIONS].index(active_section) + 1
-    st.markdown(f"""
-    <style>
-    .cx-navbar [data-testid="stHorizontalBlock"] > div:nth-child({active_index}) a {{
-        color: #5B8DEF !important;
-        font-weight: 700 !important;
-        border-bottom: 2px solid #5B8DEF !important;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+            st.markdown(f'<div class="{css}">', unsafe_allow_html=True)
+            st.page_link(target, label=label)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_subtabs(items, active_target):
