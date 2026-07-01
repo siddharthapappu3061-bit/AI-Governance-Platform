@@ -279,8 +279,58 @@ def _tab_iso_governance():
     st.markdown("<div style='font-size:0.8rem;color:#888;margin-bottom:0.8rem;'>"
                 "Automated compliance check based on captured M1 + M2 data.</div>",
                 unsafe_allow_html=True)
+    
+    st.markdown("#### 🔍 Filter Use Cases")
+    
+    col1, col2 = st.columns([3, 2])
 
-    for r in records:
+    with col1:
+        search = st.text_input(
+            "Search Use Cases",
+            placeholder="Problem ID, owner, keyword...",
+            key="iso_search",
+        )
+
+    with col2:
+        status_filter = st.selectbox(
+            "Status",
+            [
+                "All Use Cases",
+                "Approved",
+                "Under Review",
+                "Submitted",
+                "Deferred",
+                "Rejected",
+            ],
+            key="iso_status_filter",
+        )
+
+    display_records = records
+
+    if search:
+        q = search.lower()
+
+        display_records = [
+            r for r in display_records
+            if (
+                q in str(r.get("id", "")).lower()
+                or q in str(r.get("problem_statement", "")).lower()
+                or q in str(r.get("owner", "")).lower()
+                or q in str(r.get("workflow_location", "")).lower()
+            )
+        ]
+
+    if status_filter != "All Use Cases":
+        display_records = [
+            r for r in display_records
+            if r.get("status") == status_filter
+        ]
+
+    if not display_records:
+        st.info("No matching use cases found.")
+        return
+
+    for r in display_records:
         asmt = all_asmt.get(r["id"], {})
         checks = _iso_compliance_checks(r, asmt)
 
@@ -355,7 +405,7 @@ def _tab_iso_governance():
 
     st.markdown("---")
     st.markdown("#### 📊 Portfolio ISO 42001 Summary")
-    _iso_portfolio_chart(records, all_asmt)
+    _iso_portfolio_chart(display_records, all_asmt)
 
 
 def _iso_compliance_checks(r: dict, asmt: dict) -> dict:
@@ -483,10 +533,10 @@ def _iso_compliance_checks(r: dict, asmt: dict) -> dict:
     }
 
 
-def _iso_portfolio_chart(records, all_asmt):
+def _iso_portfolio_chart(display_records, all_asmt):
     rows = []
     weights = {"ok": 1.0, "partial": 0.5, "fail": 0.0}
-    for r in records:
+    for r in display_records:
         asmt = all_asmt.get(r["id"], {})
         checks = _iso_compliance_checks(r, asmt)
         total = len(checks)
@@ -550,13 +600,51 @@ def _tab_nist_monitoring():
         st.info("No use cases available.")
         return
 
-    approved_records = [r for r in records if r.get("status") in ["Approved", "Under Review"]]
-    if not approved_records:
-        st.info("No Approved or Under Review use cases to monitor. Use Tab 2 to approve use cases.")
-        all_records_option = st.checkbox("Show all use cases regardless of status")
-        approved_records = records if all_records_option else []
-        if not approved_records:
-            return
+    st.markdown("#### 🔍 Filter Use Cases")
+
+    col1, col2 = st.columns([3, 2])
+
+    with col1:
+        search = st.text_input(
+            "Search Use Cases",
+            placeholder="Problem ID, owner, keyword...",
+            key="nist_search",
+        )
+
+    with col2:
+        status_filter = st.selectbox(
+            "Status",
+            [
+                "All Use Cases",
+                "Approved",
+                "Under Review",
+                "Submitted",
+                "Deferred",
+                "Rejected",
+            ],
+            key="nist_status_filter",
+        )
+
+    display_records = records
+
+    if search:
+        q = search.lower()
+        display_records = [
+            r for r in display_records
+            if q in r.get("id", "").lower()
+            or q in r.get("problem_statement", "").lower()
+            or q in r.get("action_owner", "").lower()
+        ]
+
+    if status_filter != "All Use Cases":
+        display_records = [
+            r for r in display_records
+            if r.get("status") == status_filter
+        ]
+
+    if not display_records:
+        st.info("No matching use cases found.")
+        return
 
     st.markdown("#### 🔬 NIST AI RMF Signal Matrix")
     st.markdown("<div style='font-size:0.8rem;color:#888;margin-bottom:0.8rem;'>"
@@ -564,7 +652,7 @@ def _tab_nist_monitoring():
                 "Green = within safe thresholds · Orange = attention required · Red = action needed.</div>",
                 unsafe_allow_html=True)
 
-    for r in approved_records:
+    for r in display_records:
         asmt = all_asmt.get(r["id"], {})
         gp = all_gp.get(r["id"], {})
         signals = _nist_signals(r, asmt, gp)
@@ -630,7 +718,7 @@ def _tab_nist_monitoring():
 
     st.markdown("---")
     st.markdown("#### 🌡️ Portfolio Risk Heatmap")
-    _nist_heatmap(approved_records, all_asmt)
+    _nist_heatmap(display_records, all_asmt)
 
 
 def _nist_signals(r: dict, asmt: dict, gp: dict) -> dict:
