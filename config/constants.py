@@ -156,16 +156,16 @@ MODULES = [
 
 # ── Module 3 — Gain Pain Analysis ─────────────────────────────────────────────
 GAIN_DIMENSIONS = [
-    {"id": "business_value_gain",  "label": "Business Value Gain",  "icon": "💰", "nist": "MAP 4.1"},
-    {"id": "strategic_alignment",  "label": "Strategic Alignment",  "icon": "🎯", "nist": "GOVERN 1.1"},
-    {"id": "efficiency_gain",      "label": "Efficiency Gain",      "icon": "⚡", "nist": "MAP 4.2"},
-    {"id": "innovation_potential", "label": "Innovation Potential", "icon": "🚀", "nist": "MAP 4.3"},
+    {"id": "business_value_gain",  "label": "Business Value Gain",  "icon": "💰", "nist": "MAP 1.4"},
+    {"id": "strategic_alignment",  "label": "Strategic Alignment",  "icon": "🎯", "nist": "MAP 1.3"},
+    {"id": "efficiency_gain",      "label": "Efficiency Gain",      "icon": "⚡", "nist": "MAP 3.1"},
+    {"id": "innovation_potential", "label": "Innovation Potential", "icon": "🚀", "nist": "MAP 3.3"},
 ]
 
 PAIN_DIMENSIONS = [
-    {"id": "implementation_cost",  "label": "Implementation Cost",  "icon": "💸", "nist": "MAP 5.2"},
+    {"id": "implementation_cost",  "label": "Implementation Cost",  "icon": "💸", "nist": "MAP 3.2"},
     {"id": "operational_risk",     "label": "Operational Risk",     "icon": "⚠️", "nist": "MAP 2.3"},
-    {"id": "adoption_resistance",  "label": "Adoption Resistance",  "icon": "🔄", "nist": "GOVERN 4.1"},
+    {"id": "adoption_resistance",  "label": "Adoption Resistance",  "icon": "🔄", "nist": "GOVERN 4.2"},
     {"id": "compliance_burden",    "label": "Compliance Burden",    "icon": "⚖️", "nist": "MAP 1.1"},
 ]
 
@@ -321,3 +321,55 @@ MODULES = [
     ("m4", "04", "Committee Decision",     "Active"),
     ("m5", "05", "Governance Dashboard",   "Active"),
 ]
+
+NIST_REFERENCES = {
+
+    "MAP 1.4": {
+        "title": "Business Value",
+        "description":
+            "The business value or context of business use has been clearly defined or re-evaluated."
+    },
+
+    "MAP 1.3": {
+        "title": "Strategic Alignment",
+        "description":
+            "The organization's mission and relevant goals for AI technology are understood and documented."
+    },
+
+    "MAP 3.1": {
+        "title": "Expected Benefits",
+        "description":
+            "Potential benefits of intended AI system functionality and performance are examined and documented."
+    },
+
+    "MAP 3.3": {
+        "title": "Application Scope",
+        "description":
+            "Targeted application scope is specified and documented based on the system capability and context."
+    },
+
+    "MAP 3.2": {
+        "title": "Costs",
+        "description":
+            "Potential costs, including non-monetary costs resulting from AI functionality, are examined and documented."
+    },
+
+    "MAP 2.3": {
+        "title": "Operational Risk",
+        "description":
+            "Scientific integrity, data quality, validation, and trustworthiness considerations are identified and documented."
+    },
+
+    "GOVERN 4.2": {
+        "title": "Stakeholder Communication",
+        "description":
+            "Organizational teams document AI risks and communicate potential impacts to relevant stakeholders."
+    },
+
+    "MAP 1.1": {
+        "title": "Compliance Context",
+        "description":
+            "The intended purpose, applicable laws, regulations, norms, expectations, and deployment context are understood and documented."
+    }
+
+}

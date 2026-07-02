@@ -490,7 +490,6 @@ def parse_extracted(text: str) -> dict | None:
 def strip_json(text: str) -> str:
     return re.sub(r"```json[\s\S]*?```", "", text).strip()
 
-
 def clean_llm_json(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)

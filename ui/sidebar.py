@@ -142,7 +142,6 @@ def render_sidebar(active: str = "landing"):
                 css_class = "cx-nav-item cx-nav-active" if is_active else "cx-nav-item"
                 st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
                 st.page_link(target, label=label)
-                st.markdown('</div>', unsafe_allow_html=True)
 
             # Expert Advice kept reachable but tucked out of the primary
             # three-item list, same as Figma keeps secondary tools subtle.

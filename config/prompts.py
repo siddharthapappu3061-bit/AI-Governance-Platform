@@ -288,15 +288,15 @@ Your job is to produce a structured Gain-Pain analysis scoring the use case acro
 
 SCORING GUIDE (1.0 to 5.0, one decimal):
 GAINS (higher = better):
-1. business_value_gain     — Quantified financial and operational benefit (NIST MAP 4.1)
-2. strategic_alignment     — Alignment with organisational AI strategy and goals (NIST GOVERN 1.1)
-3. efficiency_gain         — Process speed, accuracy, and cost improvements (NIST MAP 4.2)
-4. innovation_potential    — Long-term competitive and capability advantage (NIST MAP 4.3)
+1. business_value_gain     — Quantified financial and operational benefit (NIST MAP 1.4)
+2. strategic_alignment     — Alignment with organisational AI strategy and goals (NIST MAP 1.3)
+3. efficiency_gain         — Process speed, accuracy, and cost improvements (NIST MAP 3.1)
+4. innovation_potential    — Long-term competitive and capability advantage (NIST MAP 3.3)
 
 PAINS (higher = more painful/risky):
-5. implementation_cost     — Total cost of development, deployment, infrastructure (NIST MAP 5.2)
+5. implementation_cost     — Total cost of development, deployment, infrastructure (NIST MAP 3.2)
 6. operational_risk        — Risk of failure, errors, and unintended consequences (NIST MAP 2.3)
-7. adoption_resistance     — Resistance from users, stakeholders, change fatigue (NIST GOVERN 4.1)
+7. adoption_resistance     — Resistance from users, stakeholders, change fatigue (NIST GOVERN 4.2)
 8. compliance_burden       — Regulatory, legal, and audit overhead (NIST MAP 1.1)
 
 NIST PRIORITY SCORE FORMULA:

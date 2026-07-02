@@ -20,6 +20,7 @@ from datetime import datetime
 
 from config.constants import (GAIN_DIMENSIONS, PAIN_DIMENSIONS, PRIORITY_BANDS,
                               M3_SCORING_BASIS, M3_PRIORITY_FORMULA_HTML,
+                              NIST_REFERENCES,
                               M3_AVG_GAINS_FORMULA_HTML, M3_AVG_PAINS_FORMULA_HTML)
 from database.problem_repository import get_problems
 from database.db import db_get_problem, db_load_assessments, db_save_gainpain, db_update_status, db_load_gainpain
@@ -257,6 +258,69 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 col_gain, col_pain = st.columns(2, gap="large")
+
+# ── ⓘ tooltip CSS (injected once, scoped to this page) ───────────────────
+st.markdown("""
+<style>
+.nist-tag-wrap {
+    display: inline-flex; align-items: center; gap: 3px;
+}
+.nist-code {
+    color: #aaa; font-size: 0.7rem;
+}
+.nist-info-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #5B8DEF; color: white;
+    font-size: 0.58rem; font-weight: 800;
+    cursor: default;
+    position: relative;
+    flex-shrink: 0;
+    line-height: 1;
+    text-decoration: none;
+}
+.nist-info-btn .nist-tooltip {
+    visibility: hidden; opacity: 0;
+    position: absolute;
+    bottom: 130%; left: 50%;
+    transform: translateX(-50%);
+    background: #1E293B; color: #E2E8F0;
+    border-radius: 8px; padding: 8px 11px;
+    width: 240px; z-index: 9999;
+    font-size: 0.72rem; font-weight: 400; line-height: 1.5;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    text-align: left;
+}
+.nist-info-btn .nist-tooltip::after {
+    content: "";
+    position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #1E293B;
+}
+.nist-info-btn:hover .nist-tooltip {
+    visibility: visible; opacity: 1;
+}
+</style>
+""", unsafe_allow_html=True)
+
+def nist_tooltip(code: str) -> str:
+    """Return HTML for the NIST code + ⓘ button with hover tooltip."""
+    ref = NIST_REFERENCES.get(code, {})
+    title = ref.get("title", code)
+    desc  = ref.get("description", "No description available.")
+    safe_desc = desc.replace('"', "&quot;").replace("'", "&#39;")
+    return (
+        f'<span class="nist-tag-wrap">'
+        f'<span class="nist-code">{code}</span>'
+        f'<span class="nist-info-btn">i'
+        f'<span class="nist-tooltip"><strong>{code} — {title}</strong><br>{safe_desc}</span>'
+        f'</span>'
+        f'</span>'
+    )
+
 with col_gain:
     st.markdown("**📈 Gains**")
     for d in GAIN_DIMENSIONS:
@@ -268,7 +332,7 @@ with col_gain:
         st.markdown(f"""
         <div style="margin-bottom:1rem;">
           <div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:3px;">
-            <span>{d['icon']} {d['label']} <span style="color:#aaa;font-size:0.7rem;">{d['nist']}</span></span>
+            <span>{d['icon']} {d['label']} {nist_tooltip(d['nist'])}</span>
             <span style="font-weight:700;color:{col};">{s:.1f}/5</span>
           </div>
           <div style="background:#F0F0F8;border-radius:6px;height:7px;">
@@ -292,7 +356,7 @@ with col_pain:
         st.markdown(f"""
         <div style="margin-bottom:1rem;">
           <div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:3px;">
-            <span>{d['icon']} {d['label']} <span style="color:#aaa;font-size:0.7rem;">{d['nist']}</span></span>
+            <span>{d['icon']} {d['label']} {nist_tooltip(d['nist'])}</span>
             <span style="font-weight:700;color:{col};">{s:.1f}/5</span>
           </div>
           <div style="background:#F0F0F8;border-radius:6px;height:7px;">

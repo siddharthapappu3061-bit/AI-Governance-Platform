@@ -240,6 +240,103 @@ with right:
 
     )
 
+st.divider()
+
+# ── Dimension Scores ─────────────────────────────────────────────────────
+st.markdown("### 📊 Dimension Scores")
+for dim in ASSESSMENT_DIMENSIONS:
+    s = scores.get(dim["id"], 0)
+    pct = int(s / 5 * 100)
+    col = get_completeness_color(pct)
+    basis = M2_SCORING_BASIS.get(dim["id"], "")
+    rsn = dim_reasoning.get(dim["id"], "")
+    st.markdown(f"""
+    <div class="card" style="padding:0.9rem 1.2rem;margin-bottom:0.6rem;min-height:0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span>{dim['icon']} <b>{dim['label']}</b> <span style="color:#888;font-size:0.75rem;">({dim['role']})</span></span>
+        <span style="font-weight:700;color:{col};">{s:.1f}/5</span>
+      </div>
+      <div style="background:#eee;border-radius:8px;height:8px;margin-top:6px;">
+        <div style="background:{col};width:{pct}%;height:8px;border-radius:8px;"></div>
+      </div>
+      {f'<div style="font-size:0.78rem;color:#444;margin-top:7px;font-style:italic;">📌 {rsn}</div>' if rsn else ""}
+      <div class="score-basis">
+        <span class="basis-label">Score basis — what the AI evaluated</span>
+        {basis}
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+# ── Reasoning ────────────────────────────────────────────────────────────
+st.markdown("### 🧠 Reasoning")
+if result.get("overall_summary"):
+    st.markdown(f'<div class="review-box">{result["overall_summary"]}</div>', unsafe_allow_html=True)
+st.write("")
+for dim in ASSESSMENT_DIMENSIONS:
+    rsn = dim_reasoning.get(dim["id"], "")
+    if rsn:
+        st.markdown(f"**{dim['icon']} {dim['label']}:** {rsn}")
+
+# ── Verdict ──────────────────────────────────────────────────────────────
+st.markdown("### ✅ Verdict")
+if hard_gate:
+    st.error(f"🚫 Hard Gate Triggered: {hard_gate_reason}")
+
+penalty_note = "&nbsp;· −0.3 ISO High-risk penalty applied" if hard_gate and "High" in hard_gate_reason else ""
+gate_note = "&nbsp;· hard gate triggered" if hard_gate else ""
+
+verdict_html = (
+    f'<div style="background:{vc["bg"]};border:1.5px solid {vc["color"]};border-radius:14px;'
+    f'padding:1.2rem 1.6rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;">'
+    f'<div>'
+    f'<div style="font-size:0.7rem;color:{vc["color"]};font-weight:700;letter-spacing:0.08em;">OVERALL SCORE {M2_OVERALL_FORMULA_HTML}</div>'
+    f'<div style="font-size:1.9rem;font-weight:800;color:{vc["color"]};margin-top:2px;">{overall:.2f}<span style="font-size:1rem;opacity:0.6;"> / 5</span></div>'
+    f'<div style="font-size:0.73rem;color:{vc["color"]};margin-top:4px;opacity:0.85;">mean of 6 dimension scores{penalty_note}{gate_note}</div>'
+    f'</div>'
+    f'<div style="font-size:1rem;font-weight:700;color:{vc["color"]};text-align:right;">'
+    f'{vc["icon"]} {verdict}<br>'
+    f'<span style="font-size:0.7rem;opacity:0.7;font-weight:400;">≥ 3.5 Feasible &nbsp;·&nbsp; 2.5–3.49 Conditional &nbsp;·&nbsp; &lt; 2.5 Not Feasible</span>'
+    f'</div>'
+    f'</div>'
+)
+st.markdown(verdict_html, unsafe_allow_html=True)
+
+# ── Recommendations ──────────────────────────────────────────────────────
+st.markdown("### 💡 Recommendations")
+rec_col, risk_col = st.columns(2)
+with rec_col:
+    if result.get("strengths"):
+        st.markdown("**✅ Strengths**")
+        for s in result["strengths"]:
+            st.markdown(f"- {s}")
+    if result.get("recommendations"):
+        st.markdown("**💡 Recommendations**")
+        for r in result["recommendations"]:
+            st.markdown(f"- {r}")
+with risk_col:
+    if result.get("risks"):
+        st.markdown("**⚠️ Risks & Gaps**")
+        for r in result["risks"]:
+            st.markdown(f"- {r}")
+
+assessments = db_load_assessments(problem_id)
+if assessments:
+    latest = assessments[0]
+    with st.expander("Full AI Report", expanded=False):
+        st.markdown(latest.get("ai_recommendation", ""))
+
+    df = pd.DataFrame([{
+        "Assessment ID": latest["id"], "Problem ID": problem_id,
+        "Assessed at": latest["assessed_at"], "Overall Score": latest["overall_score"],
+        "Verdict": latest["verdict"],
+        **{d["label"]: scores.get(d["id"]) for d in ASSESSMENT_DIMENSIONS},
+    }])
+    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode(),
+                        f"assessment_{latest['id']}.csv", "text/csv")
+st.divider()
+
+col1, col2 = st.columns([4, 1])
+
+with col1:
     if st.button(
         "💾 Save Assessment",
         width = 'stretch'
@@ -347,108 +444,6 @@ with right:
         st.success(
             "Assessment saved successfully."
         )
-
-st.divider()
-
-# ── Dimension Scores ─────────────────────────────────────────────────────
-st.markdown("### 📊 Dimension Scores")
-for dim in ASSESSMENT_DIMENSIONS:
-    s = scores.get(dim["id"], 0)
-    pct = int(s / 5 * 100)
-    col = get_completeness_color(pct)
-    basis = M2_SCORING_BASIS.get(dim["id"], "")
-    rsn = dim_reasoning.get(dim["id"], "")
-    st.markdown(f"""
-    <div class="card" style="padding:0.9rem 1.2rem;margin-bottom:0.6rem;min-height:0;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span>{dim['icon']} <b>{dim['label']}</b> <span style="color:#888;font-size:0.75rem;">({dim['role']})</span></span>
-        <span style="font-weight:700;color:{col};">{s:.1f}/5</span>
-      </div>
-      <div style="background:#eee;border-radius:8px;height:8px;margin-top:6px;">
-        <div style="background:{col};width:{pct}%;height:8px;border-radius:8px;"></div>
-      </div>
-      {f'<div style="font-size:0.78rem;color:#444;margin-top:7px;font-style:italic;">📌 {rsn}</div>' if rsn else ""}
-      <div class="score-basis">
-        <span class="basis-label">Score basis — what the AI evaluated</span>
-        {basis}
-      </div>
-    </div>""", unsafe_allow_html=True)
-
-# ── Reasoning ────────────────────────────────────────────────────────────
-st.markdown("### 🧠 Reasoning")
-if result.get("overall_summary"):
-    st.markdown(f'<div class="review-box">{result["overall_summary"]}</div>', unsafe_allow_html=True)
-st.write("")
-for dim in ASSESSMENT_DIMENSIONS:
-    rsn = dim_reasoning.get(dim["id"], "")
-    if rsn:
-        st.markdown(f"**{dim['icon']} {dim['label']}:** {rsn}")
-
-# ── Verdict ──────────────────────────────────────────────────────────────
-st.markdown("### ✅ Verdict")
-if hard_gate:
-    st.error(f"🚫 Hard Gate Triggered: {hard_gate_reason}")
-
-penalty_note = "&nbsp;· −0.3 ISO High-risk penalty applied" if hard_gate and "High" in hard_gate_reason else ""
-gate_note = "&nbsp;· hard gate triggered" if hard_gate else ""
-
-verdict_html = (
-    f'<div style="background:{vc["bg"]};border:1.5px solid {vc["color"]};border-radius:14px;'
-    f'padding:1.2rem 1.6rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;">'
-    f'<div>'
-    f'<div style="font-size:0.7rem;color:{vc["color"]};font-weight:700;letter-spacing:0.08em;">OVERALL SCORE {M2_OVERALL_FORMULA_HTML}</div>'
-    f'<div style="font-size:1.9rem;font-weight:800;color:{vc["color"]};margin-top:2px;">{overall:.2f}<span style="font-size:1rem;opacity:0.6;"> / 5</span></div>'
-    f'<div style="font-size:0.73rem;color:{vc["color"]};margin-top:4px;opacity:0.85;">mean of 6 dimension scores{penalty_note}{gate_note}</div>'
-    f'</div>'
-    f'<div style="font-size:1rem;font-weight:700;color:{vc["color"]};text-align:right;">'
-    f'{vc["icon"]} {verdict}<br>'
-    f'<span style="font-size:0.7rem;opacity:0.7;font-weight:400;">≥ 3.5 Feasible &nbsp;·&nbsp; 2.5–3.49 Conditional &nbsp;·&nbsp; &lt; 2.5 Not Feasible</span>'
-    f'</div>'
-    f'</div>'
-)
-st.markdown(verdict_html, unsafe_allow_html=True)
-
-# ── Recommendations ──────────────────────────────────────────────────────
-st.markdown("### 💡 Recommendations")
-rec_col, risk_col = st.columns(2)
-with rec_col:
-    if result.get("strengths"):
-        st.markdown("**✅ Strengths**")
-        for s in result["strengths"]:
-            st.markdown(f"- {s}")
-    if result.get("recommendations"):
-        st.markdown("**💡 Recommendations**")
-        for r in result["recommendations"]:
-            st.markdown(f"- {r}")
-with risk_col:
-    if result.get("risks"):
-        st.markdown("**⚠️ Risks & Gaps**")
-        for r in result["risks"]:
-            st.markdown(f"- {r}")
-
-assessments = db_load_assessments(problem_id)
-if assessments:
-    latest = assessments[0]
-    with st.expander("Full AI Report", expanded=False):
-        st.markdown(latest.get("ai_recommendation", ""))
-
-    df = pd.DataFrame([{
-        "Assessment ID": latest["id"], "Problem ID": problem_id,
-        "Assessed at": latest["assessed_at"], "Overall Score": latest["overall_score"],
-        "Verdict": latest["verdict"],
-        **{d["label"]: scores.get(d["id"]) for d in ASSESSMENT_DIMENSIONS},
-    }])
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode(),
-                        f"assessment_{latest['id']}.csv", "text/csv")
-st.divider()
-
-col1, col2 = st.columns([4, 1])
-
-with col1:
-    st.success(
-        "Feasibility Assessment completed successfully. "
-        "You can now continue to the Gain-Pain Analysis."
-    )
 
 with col2:
     if st.button(
